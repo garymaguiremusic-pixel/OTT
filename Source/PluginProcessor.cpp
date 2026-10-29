@@ -70,6 +70,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OttAudioProcessor::createPar
         floatParam (bandParam (b, BandIDs::release), n + " Release", logRange (1.0f, 5000.0f, 250.0f), d.release,
                     [] (float v) { return formatMs (v); });
         boolParam  (bandParam (b, BandIDs::autoRelease), n + " Auto Release", false);
+        boolParam  (bandParam (b, BandIDs::autoGain), n + " Auto Gain", false);
         floatParam (bandParam (b, BandIDs::aboveThresh), n + " Above Threshold", { kMinDb, 0.0f }, d.aboveThresh, db);
         floatParam (bandParam (b, BandIDs::aboveRatio),  n + " Above Ratio", logRange (1.0f, kRatioMax, 10.0f), d.aboveRatio,
                     [] (float v) { return formatRatio (v) + " : 1"; }, parseRatio);
@@ -256,6 +257,7 @@ void OttAudioProcessor::updateBandSettings()
         s.attackMs    = param (bandParam (b, BandIDs::attack));
         s.releaseMs   = param (bandParam (b, BandIDs::release));
         s.autoRelease = paramOn (bandParam (b, BandIDs::autoRelease));
+        s.autoGain    = paramOn (bandParam (b, BandIDs::autoGain));
         const float offset = param (bandParam (b, BandIDs::threshold));
         s.aboveThresh = param (bandParam (b, BandIDs::aboveThresh)) + offset;
         s.aboveRatio  = param (bandParam (b, BandIDs::aboveRatio));
@@ -406,6 +408,7 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         meters[(size_t) b].inputDb.store (m.inputDb);
         meters[(size_t) b].outputDb.store (m.outputDb);
         meters[(size_t) b].gainDb.store (m.gainDb);
+        meters[(size_t) b].makeupDb.store (m.makeupDb);
     }
 }
 

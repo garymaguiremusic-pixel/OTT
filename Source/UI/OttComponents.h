@@ -164,7 +164,7 @@ private:
     std::array<juce::Rectangle<float>, 3> lanes;
     juce::Rectangle<float> scaleArea;
 
-    struct MeterState { float in = -80.0f, out = -80.0f, gain = 0.0f; };
+    struct MeterState { float in = -80.0f, out = -80.0f, gain = 0.0f, makeup = 0.0f; };
     std::array<MeterState, 3> meterState;
 
     Hit active, hover;

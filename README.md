@@ -15,7 +15,7 @@ The main view follows the layout of Xfer's OTT. The detailed settings are on the
 | Section | Controls |
 |---------|----------|
 | **Top** | **Depth** (dry/wet), **Time** (scales every attack/release), **In Gain**, **Out Gain**. **LINK** (on by default): turning In Gain up turns Out Gain down by the same amount. **Auto Gain** on/off |
-| **Bands** | One row per band (H / M / L), with an **S** (solo) button beside each bar. The number and knob are the band's output gain (default 10.3 / 5.7 / 10.3 dB). The bar runs from -80 dB (left) to 0 dB (right): the blue area is below the threshold (raised upward), the brown area is above it (pushed down). Drag an edge to move a threshold, and drag up/down inside an area to set its ratio. The strip through the middle shows the input level (grey), what the compressor does to it (orange = pushed down, light blue = lifted up) and where it ends up (white tick); the corner number is the gain change |
+| **Bands** | One row per band (H / M / L), with **S** (solo) and **A** (band auto gain) buttons beside each bar. The number and knob are the band's output gain (default 10.3 / 5.7 / 10.3 dB). The bar runs from -80 dB (left) to 0 dB (right): the blue area is below the threshold (raised upward), the brown area is above it (pushed down). Drag an edge to move a threshold, and drag up/down inside an area to set its ratio. The strip through the middle shows the input level (grey), what the compressor does to it (orange = pushed down, light blue = lifted up) and where it ends up (white tick); the corner number is the gain change |
 | **Upward / Downward** | Scale each direction (as on Xfer OTT); at 0 % that side is hidden from the bars. **Linear Phase** on = no phase shift (~43 ms latency), off = zero latency. **Soft Knee**, **RMS** (off = peak detection), **Advanced** |
 | **Advanced** | Three sections (High / Mid / Low): split frequency with High / Low on/off, power (off = band passes untouched), **S** (solo), **Threshold** (-40 to +24 dB, moves both edges of the band's bar together, double-click = 0), **Attack**, **Release** with **Auto** release (short peaks recover fast, sustained compression slowly). **Crossover Slope**: 6 / 12 / 18 / 24 dB/oct (default 12) |
 | **Bars** | **Bypass**, 10 factory presets, **Size** (75-200 %), help |
@@ -36,6 +36,14 @@ going out (K-weighted, the same weighting LUFS uses, in 100 ms blocks over a sli
 settles in about a second) and keeps the output at the input's
 loudness, so louder never fools you into thinking it's better. The readout under the button shows the
 gain it is applying. Bypass always passes the untouched input.
+
+**Band auto gain (A)** keeps a band's level the same when you change its compression (threshold,
+edges, ratios, Upward / Downward), like a compressor's auto make-up. Each band keeps 8 s of its
+incoming level (10 ms steps) and works out exactly how much the current settings change its loudness,
+so a settings change is compensated at once and the make-up doesn't ride the music. A running
+comparison with the compressor's real output corrects for attack and release. In tests the band level
+stayed within ~0.2 dB of the uncompressed band, including after a 20 dB threshold change. The band
+knob still trims on top, and the corner of the band's bar shows the make-up ("A +x.x").
 
 When **Upward** or **Downward** is at 0 %, that side (its coloured area and orange edge) disappears
 from the band bars.

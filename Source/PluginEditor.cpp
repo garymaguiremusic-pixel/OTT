@@ -115,6 +115,10 @@ OttAudioProcessorEditor::OttAudioProcessorEditor (OttAudioProcessor& proc)
         mainSoloButtons[(size_t) b].setButtonText ("S");
         setupToggle (mainSoloButtons[(size_t) b], ott::bandParam (b, ott::BandIDs::solo),
                      "Solo the " + String (ott::bandName (b)).toLowerCase() + " band", content);
+        bandAutoGainButtons[(size_t) b].setButtonText ("A");
+        setupToggle (bandAutoGainButtons[(size_t) b], ott::bandParam (b, ott::BandIDs::autoGain),
+                     "Auto gain for the " + String (ott::bandName (b)).toLowerCase() + " band: keeps its level the same "
+                     "when you change its threshold or compression. The band knob still trims on top", content);
     }
 
     display.onStatus = status;
@@ -317,8 +321,9 @@ void OttAudioProcessorEditor::layoutContent()
     for (int b = 0; b < ott::NumBands; ++b)
     {
         const int r = kBandRowY[b];
-        bandGainFields[(size_t) b]->setBounds (12, r + 20, 46, 24);
-        mainSoloButtons[(size_t) b].setBounds (64, r + 21, 22, 22);
+        bandGainFields[(size_t) b]->setBounds (8, r + 20, 40, 24);
+        mainSoloButtons[(size_t) b].setBounds (51, r + 21, 21, 22);
+        bandAutoGainButtons[(size_t) b].setBounds (74, r + 21, 21, 22);
         bandGainKnobs[(size_t) b]->setBounds (420, r + 4, 56, 56);
         lanes[(size_t) b] = { 8.0f, (float) (r - displayBounds.getY() + 8), 308.0f, (float) (kBandRowH - 16) };
     }
@@ -387,7 +392,8 @@ void OttAudioProcessorEditor::timerCallback()
         for (Component* c : { (Component*) bandGainFields[i].get(), (Component*) bandGainKnobs[i].get(),
                               (Component*) thresholdFields[i].get(), (Component*) attackFields[i].get(), (Component*) releaseFields[i].get(),
                               (Component*) &powerButtons[i], (Component*) &soloButtons[i],
-                              (Component*) &mainSoloButtons[i], (Component*) &autoReleaseButtons[i] })
+                              (Component*) &mainSoloButtons[i], (Component*) &autoReleaseButtons[i],
+                              (Component*) &bandAutoGainButtons[i] })
             if (c->isEnabled() != on)
                 c->setEnabled (on);
 

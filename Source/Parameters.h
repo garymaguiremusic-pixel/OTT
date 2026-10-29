@@ -60,6 +60,7 @@ namespace BandIDs
     inline constexpr auto attack      = "attack";
     inline constexpr auto release     = "release";
     inline constexpr auto autoRelease = "autoRelease";
+    inline constexpr auto autoGain    = "autoGain";      // band make-up
     inline constexpr auto aboveThresh = "aboveThresh";
     inline constexpr auto aboveRatio  = "aboveRatio";
     inline constexpr auto belowThresh = "belowThresh";

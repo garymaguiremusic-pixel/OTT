@@ -519,6 +519,7 @@ void DynamicsDisplay::updateMeters (float dt)
         s.in  += (in  - s.in)  * (in  > s.in  ? rise : fall);
         s.out += (out - s.out) * (out > s.out ? rise : fall);
         s.gain += (m.gainDb.load() - s.gain) * gainGlide;
+        s.makeup += (m.makeupDb.load() - s.makeup) * gainGlide;
     }
     repaint();
 }
@@ -617,7 +618,10 @@ void DynamicsDisplay::paintLane (Graphics& g, int band, Rectangle<float> lane)
     // small, dim gain readout
     g.setFont (CustomLookAndFeel::uiFont (10.0f, true));
     g.setColour (Colours::white.withAlpha (0.55f));
-    g.drawText ((m.gain >= 0.05f ? "+" : "") + String (m.gain, 1) + " dB", lane.reduced (5.0f, 2.0f), Justification::topRight);
+    String text = (m.gain >= 0.05f ? "+" : "") + String (m.gain, 1) + " dB";
+    if (get (band, ott::BandIDs::autoGain) >= 0.5f)
+        text << "   A " << (m.makeup >= 0.0f ? "+" : "") << String (m.makeup, 1);
+    g.drawText (text, lane.reduced (5.0f, 2.0f), Justification::topRight);
 }
 
 //==============================================================================
@@ -651,6 +655,7 @@ void HelpOverlay::paint (Graphics& g)
         "DEPTH = dry/wet.  TIME scales every attack and release.  IN GAIN drives all bands.",
         "LINK: turning IN GAIN up turns OUT GAIN down by the same amount (keeps the level matched).",
         "AUTO GAIN: keeps the output as loud (K-weighted, like LUFS) as what comes into the plugin.",
+        "S = solo a band.  A = band auto gain: keeps that band's level when you change its compression.",
         "BANDS: drag a region's edge to set its threshold, drag inside it (or wheel) to set its ratio.",
         "Left (blue) = below threshold, raised upward.  Right (brown) = above threshold, pushed down.",
         "The knob and number on each row are the band's output gain.",

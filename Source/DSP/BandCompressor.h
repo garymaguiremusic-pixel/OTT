@@ -2,6 +2,7 @@
 
 #include <juce_audio_basics/juce_audio_basics.h>
 #include "../Parameters.h"
+#include <array>
 
 namespace ott
 {
@@ -20,6 +21,14 @@ namespace ott
         release) and a slow one (250 ms attack, 1.2 s release); the band follows
         whichever compresses more. Short peaks recover quickly, sustained
         compression recovers slowly, so there's less pumping on dense material.
+      - Auto gain (make-up): keeps 8 s of the band's incoming level (10 ms steps)
+        and works out the exact loudness change the current gain curve applies to
+        it; the make-up cancels that. Changing a threshold, ratio or Upward /
+        Downward updates it at once (it re-evaluates the history), and it only
+        drifts at the pace of an 8 s loudness window, so it doesn't ride the music.
+        A running comparison of the real compressor output with the static curve
+        corrects for attack / release, so the long-term level matches to ~0.2 dB.
+        The band's output gain still trims on top.
 */
 class BandCompressor
 {
@@ -31,7 +40,7 @@ public:
         float aboveThresh = -30.0f, aboveRatio = 4.0f;
         float belowThresh = -40.0f, belowRatio = 4.0f;
         float upward = 1.0f, downward = 1.0f, timeScale = 1.0f;
-        bool active = true, softKnee = true, rms = true, autoRelease = false;
+        bool active = true, softKnee = true, rms = true, autoRelease = false, autoGain = false;
     };
 
     struct Meter
@@ -39,6 +48,7 @@ public:
         float inputDb = kMinDb;   // detector level (after input gain)
         float outputDb = kMinDb;  // band output peak
         float gainDb = 0.0f;      // gain change applied by the compressor
+        float makeupDb = 0.0f;    // auto gain make-up
     };
 
     void prepare (double fs)
@@ -48,6 +58,8 @@ public:
         outGain.reset (fs, 0.02);
         activeMix.reset (fs, 0.03);
         rmsAlpha = 1.0f - coefFor (10.0f);
+        makeupAlpha = 1.0f - coefFor (100.0f);
+        blockLength = std::max (1, juce::roundToInt (0.01 * fs));
         reset();
     }
 
@@ -55,6 +67,8 @@ public:
     {
         envMs = 0.0f;
         gainDb = fastDb = slowDb = 0.0f;
+        resetMakeup();
+        makeupGain = makeupTarget = 1.0f;
         inGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (settings.inputDb));
         outGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (settings.outputDb));
         activeMix.setCurrentAndTargetValue (settings.active ? 1.0f : 0.0f);
@@ -62,7 +76,17 @@ public:
 
     void setSettings (const Settings& s)
     {
+        using juce::exactlyEqual;
+        const bool curveChanged = ! exactlyEqual (s.aboveThresh, settings.aboveThresh) || ! exactlyEqual (s.belowThresh, settings.belowThresh)
+                               || ! exactlyEqual (s.aboveRatio, settings.aboveRatio) || ! exactlyEqual (s.belowRatio, settings.belowRatio)
+                               || ! exactlyEqual (s.upward, settings.upward) || ! exactlyEqual (s.downward, settings.downward)
+                               || s.softKnee != settings.softKnee || s.rms != settings.rms;
+        const bool switchedOn = s.autoGain && ! settings.autoGain;
         settings = s;
+        if (curveChanged)
+            blocksSinceChange = 0;               // the ballistics correction re-learns from new blocks
+        if ((curveChanged || switchedOn) && settings.autoGain)
+            updateMakeupTarget();                // re-evaluate the history with the new curve
         inGain.setTargetValue (juce::Decibels::decibelsToGain (s.inputDb));
         outGain.setTargetValue (juce::Decibels::decibelsToGain (s.outputDb));
         activeMix.setTargetValue (s.active ? 1.0f : 0.0f);
@@ -151,7 +175,15 @@ public:
             const float g = juce::Decibels::decibelsToGain (gainDb, -200.0f);
             float zl = yl * g, zr = yr * g;
 
-            const float post = outGain.getNextValue();
+            // auto gain: collect the incoming level, then apply the make-up
+            blockIn += (double) (yl * yl + yr * yr) * chanNorm;
+            blockLevel += (double) std::max (kMinDb, levelDb);
+            blockOut += (double) (zl * zl + zr * zr) * chanNorm;
+            if (++blockCount >= blockLength)
+                pushMakeupBlock();
+            makeupGain += makeupAlpha * ((settings.autoGain ? makeupTarget : 1.0f) - makeupGain);
+
+            const float post = outGain.getNextValue() * makeupGain;
             zl *= post;
             zr *= post;
 
@@ -170,11 +202,78 @@ public:
         meter.inputDb = std::max (kMinDb, maxLevelDb);
         meter.outputDb = std::max (kMinDb, juce::Decibels::gainToDecibels (maxOut, -100.0f));
         meter.gainDb = settings.active ? gainDb : 0.0f;
+        meter.makeupDb = juce::Decibels::gainToDecibels (makeupGain);
     }
 
     const Meter& getMeter() const noexcept     { return meter; }
 
 private:
+    void resetMakeup()
+    {
+        historyPower.fill (0.0f);
+        historyLevel.fill (kMinDb);
+        historyActual.fill (0.0f);
+        historyPredicted.fill (0.0f);
+        historyCount = historyIndex = blockCount = blocksSinceChange = 0;
+        blockIn = blockLevel = blockOut = 0.0;
+        ballistics = 1.0;
+        makeupTarget = makeupGain;
+    }
+
+    void pushMakeupBlock()
+    {
+        historyPower[(size_t) historyIndex] = (float) (blockIn / (double) blockLength);
+        historyLevel[(size_t) historyIndex] = (float) (blockLevel / (double) blockLength);
+        // what the compressor really did vs. what the static curve predicts (attack / release
+        // smooth the gain, so the real average differs a little from the curve)
+        historyActual[(size_t) historyIndex] = (float) (blockOut / (double) blockLength);
+        historyPredicted[(size_t) historyIndex] = historyPower[(size_t) historyIndex]
+            * (float) std::pow (10.0, 0.1 * (double) computeGainDb (historyLevel[(size_t) historyIndex]));
+        historyIndex = (historyIndex + 1) % kHistory;
+        historyCount = std::min (historyCount + 1, kHistory);
+        blocksSinceChange = std::min (blocksSinceChange + 1, kHistory);
+        blockIn = blockLevel = blockOut = 0.0;
+        blockCount = 0;
+        if (settings.autoGain && historyIndex % 5 == 0)   // every 50 ms (setting changes update at once)
+            updateMakeupTarget();
+    }
+
+    // Make-up = loudness of the history / loudness of the history after the current gain curve
+    // (each 10 ms step weighted by its power, its gain taken at the detector's level).
+    void updateMakeupTarget()
+    {
+        double in = 0.0, out = 0.0;
+        for (int i = 0; i < historyCount; ++i)
+        {
+            const float p = historyPower[(size_t) i];
+            if (p < 1.0e-10f)
+                continue;
+            in  += (double) p;
+            out += (double) p * std::pow (10.0, 0.1 * (double) computeGainDb (historyLevel[(size_t) i]));
+        }
+
+        // Ballistics correction (limited to +/- 12 dB), learnt only from blocks recorded since the
+        // last settings change, skipping the first 0.5 s while the compressor's gain moves over to
+        // the new setting; until there's 0.5 s of settled blocks, the previous correction is kept.
+        constexpr int settleBlocks = 50;
+        if (blocksSinceChange >= 2 * settleBlocks)
+        {
+            double actual = 0.0, predicted = 0.0;
+            for (int k = 1; k <= std::min (blocksSinceChange - settleBlocks, historyCount); ++k)
+            {
+                const size_t i = (size_t) ((historyIndex - k + kHistory) % kHistory);
+                actual += (double) historyActual[i];
+                predicted += (double) historyPredicted[i];
+            }
+            if (predicted > 1.0e-20 && actual > 1.0e-20)
+                ballistics = juce::jlimit (0.063, 15.8, actual / predicted);
+        }
+
+        // Hold through silence (band below -70 dB on average); +/- 30 dB at most.
+        if (historyCount > 0 && in / (double) historyCount > 1.0e-7 && out > 1.0e-20)
+            makeupTarget = (float) juce::jlimit (0.0316, 31.6, std::sqrt (in / (out * ballistics)));
+    }
+
     float coefFor (float ms) const
     {
         return std::exp (-1.0f / (0.001f * ms * (float) sampleRate));
@@ -191,6 +290,14 @@ private:
     float attackCoef = 0.0f, releaseCoef = 0.0f, rmsAlpha = 0.0f;
     float fastReleaseCoef = 0.0f, slowAttackCoef = 0.0f, slowReleaseCoef = 0.0f;
     float knee = 10.0f, downSlope = 0.0f, upSlope = 0.0f;
+
+    // auto gain
+    static constexpr int kHistory = 800;              // 800 x 10 ms = 8 s
+    std::array<float, kHistory> historyPower {}, historyLevel {}, historyActual {}, historyPredicted {};
+    double blockIn = 0.0, blockLevel = 0.0, blockOut = 0.0;
+    int blockLength = 480, blockCount = 0, historyCount = 0, historyIndex = 0, blocksSinceChange = 0;
+    double ballistics = 1.0;
+    float makeupGain = 1.0f, makeupTarget = 1.0f, makeupAlpha = 0.0f;
 };
 
 } // namespace ott
