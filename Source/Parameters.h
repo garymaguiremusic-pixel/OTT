@@ -22,7 +22,10 @@ namespace ParamIDs
 {
     // Global
     inline constexpr auto bypass      = "bypass";
+    inline constexpr auto inGain      = "inGain";
     inline constexpr auto output      = "output";
+    inline constexpr auto inOutLink   = "inOutLink";
+    inline constexpr auto linearPhase = "linearPhase";
     inline constexpr auto time        = "time";
     inline constexpr auto amount      = "amount";
     inline constexpr auto upward      = "upward";

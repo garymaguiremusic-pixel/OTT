@@ -10,15 +10,17 @@ in code, with no image assets.
 
 ## Controls
 
+The main view follows the layout of Xfer's OTT. The detailed settings are on the **Advanced** page.
+
 | Section | Controls |
 |---------|----------|
-| **Split Freq** | **High** / **Low** switch the outer bands on/off and set the split points (default 2.50 kHz and 88.3 Hz). With a band off, Mid covers that range too. Per band: **power** (off = band passes untouched), **S** (solo), **Auto Gain** |
-| **Input** | Per-band drive into the compressor (default +5.20 dB) |
-| **Dynamics** | One lane per band on a -80 to 0 dB scale. Shows input level (thick bar), band output level (thin bar) and the gain change in dB. Drag the orange handles to set the **above** (downward) and **below** (upward) thresholds. Drag up/down inside a coloured region to set its ratio. **T / B / A** = show top, bottom or all thresholds |
-| **Att / Rel** | Attack and release per band |
-| **Output** | Per-band output gain (default 10.3 / 5.7 / 10.3 dB) |
-| **Global** | **Output**, **Time** (scales every attack/release), **Amount** (scales all compression), **Upward** / **Downward** (scale each direction, as on Xfer OTT), **Mix** (dry/wet; no comb filtering, because the dry signal is latency-aligned) |
-| Options | **Soft Knee**, **RMS** (off = peak detection), **Bypass**, **Size**, 10 factory presets |
+| **Top** | **Depth** (dry/wet), **Time** (scales every attack/release), **In Gain**, **Out Gain**. **LINK** (on by default): turning In Gain up turns Out Gain down by the same amount |
+| **Bands** | One row per band (H / M / L). The number and knob are the band's output gain (default 10.3 / 5.7 / 10.3 dB). The bar runs from -80 dB (left) to 0 dB (right): the blue area is below the threshold (raised upward), the brown area is above it (pushed down). Drag an edge to move a threshold, and drag up/down inside an area to set its ratio. The white line is the input level, the orange marker shows where the compressor moves it, and the top-left number is the gain change |
+| **Upward / Downward** | Scale each direction (as on Xfer OTT). **Linear Phase** on = no phase shift (~43 ms latency), off = zero latency. **Soft Knee**, **RMS** (off = peak detection), **Advanced** |
+| **Advanced** | Per band: High / Low on/off + split frequency, power (off = band passes untouched), **S** (solo), **Auto Gain**, Input, Attack, Release, above/below threshold and ratio. Global: Amount (scales all compression) |
+| **Bars** | **Bypass**, 10 factory presets, **Size** (75-200 %), help |
+
+![advanced page](docs/advanced.png)
 
 **Default (OTT) settings**
 
@@ -29,17 +31,24 @@ in code, with no image assets.
 | Low  | 5.20 dB | 10.3 dB | 47.8 ms | 282 ms | -33.8 dB / 66.7 : 1 | -40.8 dB / 1 : 4.17 |
 
 **Auto Gain** (per band) keeps the band's long-term loudness after compression equal to its
-loudness before the Input knob. Raising Input then changes how hard the band is squashed, not how
-loud it is. The band's Output knob still trims on top. The lane shows the auto-gain offset.
+loudness before the band's Input knob. Raising Input then changes how hard the band is squashed, not
+how loud it is. The band's output gain still trims on top.
 
 ### Mouse
 
 * **Wheel**: 1.0 per notch in the control's own units (dB, ms, %, Hz, ratio). **Shift + wheel**: 0.1.
-* **Drag** up/down (shift = fine). **Double-click** = default. **Right-click** (or Ctrl-click) = type a value.
+* **Drag** up/down (shift = fine). **Right-click** (or Ctrl-click) = type a value.
+* **Double-click** resets: gain knobs go to **0 dB**, everything else goes to its default.
 * **Resize** by dragging the bottom-right corner, or pick 75-200 % in **SIZE**. The window keeps
   its proportions, and the size is saved with the session.
 
 ## Linear-phase crossover
+
+**Linear Phase** is on by default. Turn it off for a zero-latency crossover (4th-order Linkwitz-Riley
+filters with a matching all-pass), which has phase shift around the split points. Switching fades out,
+swaps the crossovers and fades back in, and the host is told about the new latency.
+
+With Linear Phase on:
 
 Two Kaiser-windowed FIR low-passes (LP1 at the low split, LP2 at the high split) run as FFT convolutions:
 
@@ -65,11 +74,12 @@ CMakeLists.txt
 Source/
   Parameters.h                  IDs, ranges, OTT defaults, value formatting
   Presets.h                     factory presets
-  PluginProcessor.h/.cpp        parameters, band split/compress/sum, solo/mix/bypass, state
-  PluginEditor.h/.cpp           scalable layout and panels
+  PluginProcessor.h/.cpp        parameters, in gain, band split/compress/sum, solo/depth/bypass, state
+  PluginEditor.h/.cpp           scalable main view + Advanced page
   CustomLookAndFeel.h/.cpp      knobs, buttons, panels, LCDs (from VIRUS DELAY)
   UI/OttComponents.h/.cpp       knob/value-field mouse handling, dynamics display, help
-  DSP/LinearPhaseCrossover.*    FIR crossover
+  DSP/LinearPhaseCrossover.*    FIR crossover (linear phase)
+  DSP/MinPhaseCrossover.h       Linkwitz-Riley crossover (zero latency)
   DSP/BandCompressor.h          upward/downward compressor with auto gain
 ```
 

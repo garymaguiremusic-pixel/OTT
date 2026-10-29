@@ -7,6 +7,10 @@
 
 //==============================================================================
 /**
+    Main view laid out like Xfer's OTT (global knobs, three band rows, upward /
+    downward), drawn in the VIRUS DELAY style. The detailed per-band settings
+    live on the ADVANCED page, which slides over the main view.
+
     Everything is laid out at a fixed base size inside `Content`, which is then
     scaled with a transform. The window keeps its aspect ratio and can be resized
     from the corner or with the SIZE menu; the size is saved with the session.
@@ -21,59 +25,61 @@ public:
     void paint (juce::Graphics&) override;
     void resized() override;
 
-    static constexpr int kBaseWidth = 960, kBaseHeight = 436;
+    static constexpr int kBaseWidth = 520, kBaseHeight = 634;
 
 private:
-    class Content : public juce::Component
+    /** A component whose painting is supplied by the editor. */
+    struct Page : public juce::Component
     {
-    public:
-        explicit Content (OttAudioProcessorEditor& e) : editor (e) { setOpaque (true); }
-        void paint (juce::Graphics& g) override  { editor.paintContent (g); }
-    private:
-        OttAudioProcessorEditor& editor;
+        std::function<void (juce::Graphics&)> painter;
+        void paint (juce::Graphics& g) override  { if (painter) painter (g); }
     };
 
     void timerCallback() override;
     void paintContent (juce::Graphics&);
+    void paintAdvanced (juce::Graphics&);
     void layoutContent();
     void drawBackground (juce::Graphics&);
     void drawWordmark (juce::Graphics&, juce::Rectangle<float> area);
     void setStatus (const juce::String&);
     void setScale (float scale);
-    void setupToggle (juce::Button&, const juce::String& paramId, const juce::String& tooltip);
+    void showAdvanced (bool);
+    void setupToggle (juce::Button&, const juce::String& paramId, const juce::String& tooltip, juce::Component& parent);
+    void linkInputToOutput (float oldIn, float newIn);
     juce::RangedAudioParameter& p (const juce::String& id) { return *processor.apvts.getParameter (id); }
+    bool isOn (const char* id) const { return processor.apvts.getRawParameterValue (id)->load() >= 0.5f; }
 
     OttAudioProcessor& processor;
     CustomLookAndFeel lnf;
-    Content content { *this };
+    Page content, advanced;
     juce::Image background;
     float backgroundScale = 0.0f;
     juce::TooltipWindow tooltips { this, 600 };
 
-    // Top strip
+    // Top strip / bottom bar
     juce::ComboBox presetBox, sizeBox;
     juce::TextButton bypassButton { "Bypass" };
-
-    // Split / band buttons
-    juce::TextButton highOnButton { "High" }, lowOnButton { "Low" };
-    std::array<PowerButton, ott::NumBands> powerButtons;
-    std::array<juce::TextButton, ott::NumBands> soloButtons, autoGainButtons;
-    std::unique_ptr<ValueField> highFreqField, lowFreqField;
-    juce::TextButton softKneeButton { "Soft Knee" }, rmsButton { "RMS" };
-
-    // Per band knobs and fields
-    std::array<std::unique_ptr<OttKnob>, ott::NumBands> inputKnobs, outputKnobs;
-    std::array<std::unique_ptr<ValueField>, ott::NumBands> attackFields, releaseFields;
-
-    // Global
-    std::unique_ptr<OttKnob> outputKnob, timeKnob, amountKnob, upwardKnob, downwardKnob, mixKnob;
-
-    // Display
-    DynamicsDisplay display;
-    std::array<juce::TextButton, 3> displayModeButtons;
-
     HelpButton helpButton;
     HelpOverlay helpOverlay;
+
+    // Main view
+    std::unique_ptr<OttKnob> depthKnob, timeKnob, inGainKnob, outGainKnob, upwardKnob, downwardKnob;
+    juce::TextButton linkButton { "LINK" };
+    std::array<std::unique_ptr<ValueField>, ott::NumBands> bandGainFields;
+    std::array<std::unique_ptr<OttKnob>, ott::NumBands> bandGainKnobs;
+    DynamicsDisplay display;
+    juce::TextButton linearPhaseButton { "Linear Phase" }, softKneeButton { "Soft Knee" }, rmsButton { "RMS" };
+    juce::TextButton advancedButton { "Advanced" };
+
+    // Advanced page
+    juce::TextButton highOnButton { "High" }, lowOnButton { "Low" }, backButton { "Back" };
+    std::unique_ptr<ValueField> highFreqField, lowFreqField, amountField;
+    std::array<PowerButton, ott::NumBands> powerButtons;
+    std::array<juce::TextButton, ott::NumBands> soloButtons, autoGainButtons;
+    std::array<std::unique_ptr<OttKnob>, ott::NumBands> inputKnobs;
+    std::array<std::unique_ptr<ValueField>, ott::NumBands> attackFields, releaseFields,
+                                                          aboveThreshFields, aboveRatioFields,
+                                                          belowThreshFields, belowRatioFields;
 
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::vector<std::unique_ptr<ButtonAttachment>> buttonAttachments;

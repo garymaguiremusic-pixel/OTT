@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <array>
+#include <optional>
 
 class OttAudioProcessor;
 
@@ -12,7 +13,7 @@ class OttAudioProcessor;
       - vertical drag (shift = fine)
       - mouse wheel: one notch = 1.0 in the control's units (dB, ms, %, Hz, ratio),
         shift + wheel = 0.1
-      - double-click resets to the default
+      - double-click resets (to 0 dB for gain controls, otherwise to the default)
       - right-click (or ctrl/cmd-click) to type a value
       - tooltips show the parameter name and value
 */
@@ -32,6 +33,10 @@ public:
     std::function<juce::String (float)> formatter;
     /** Fired on hover / drag so the editor can show a status line. */
     std::function<void (const juce::String&)> onStatus;
+    /** Fired after every change the user makes with the mouse or keyboard (not automation). */
+    std::function<void (float oldValue, float newValue)> onUserChange;
+    /** Value for double-click; when unset, the parameter's default. */
+    std::optional<float> resetValue;
 
     juce::String getTooltip() override;
 
@@ -73,6 +78,7 @@ public:
     OttKnob (juce::RangedAudioParameter&, const juce::String& title = {}, bool bipolar = false);
 
     bool isBipolar() const noexcept  { return bipolar; }
+    bool showValue = true;           // value text under the knob
     void paint (juce::Graphics&) override;
 
 private:

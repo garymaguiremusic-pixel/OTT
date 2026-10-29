@@ -4,6 +4,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include "Parameters.h"
 #include "DSP/LinearPhaseCrossover.h"
+#include "DSP/MinPhaseCrossover.h"
 #include "DSP/BandCompressor.h"
 
 //==============================================================================
@@ -61,20 +62,26 @@ public:
 private:
     void timerCallback() override;
     void updateBandSettings();
+    void updateLatency (bool linear);
     float param (const juce::String& id) const;
     bool paramOn (const juce::String& id) const;
 
     ott::LinearPhaseCrossover crossover;
+    ott::MinPhaseCrossover minPhaseCrossover;
+    bool linearActive = true;                 // audio thread: which crossover is running
+    std::atomic<bool> reportedLinear { true }; // latency currently reported to the host
+    juce::SmoothedValue<float> modeFade { 1.0f };
     std::array<ott::BandCompressor, ott::NumBands> compressors;
 
     juce::AudioBuffer<float> inputChunk, dryDelayed;
     std::array<juce::AudioBuffer<float>, ott::NumBands> bands;
 
     juce::SmoothedValue<float> mixSmoothed, bypassMix;
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> outputGain { 1.0f };
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> inputGain { 1.0f }, outputGain { 1.0f };
     std::array<juce::SmoothedValue<float>, ott::NumBands> bandSoloGain;
 
     int maxBlock = 512;
+    double currentSampleRate = 0.0;
     std::atomic<int> currentProgram { 0 };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OttAudioProcessor)

@@ -39,7 +39,7 @@ String ParamControl::getValueText() const
 String ParamControl::getTooltip()
 {
     return param.getName (64) + ":  " + getValueText()
-         + "\nWheel = 1.0 steps, Shift + wheel = 0.1. Double-click = default, right-click = type a value.";
+         + "\nWheel = 1.0 steps, Shift + wheel = 0.1. Double-click = reset, right-click = type a value.";
 }
 
 void ParamControl::sendStatus()
@@ -51,7 +51,11 @@ void ParamControl::sendStatus()
 void ParamControl::setValueFromUser (float newValue)
 {
     const auto range = param.getNormalisableRange();
-    attachment.setValueAsCompleteGesture (jlimit (range.start, range.end, newValue));
+    const float oldValue = value;
+    newValue = jlimit (range.start, range.end, newValue);
+    attachment.setValueAsCompleteGesture (newValue);
+    if (onUserChange)
+        onUserChange (oldValue, newValue);
     sendStatus();
 }
 
@@ -105,7 +109,11 @@ void ParamControl::mouseDrag (const MouseEvent& e)
     // Incremental, so pressing or releasing shift mid-drag never jumps.
     dragProportion = jlimit (0.0f, 1.0f, dragProportion + (lastDragY - e.position.y) / dragPixelsForFullRange (e.mods));
     lastDragY = e.position.y;
-    attachment.setValueAsPartOfGesture (param.convertFrom0to1 (dragProportion));
+    const float oldValue = value;
+    const float newValue = param.convertFrom0to1 (dragProportion);
+    attachment.setValueAsPartOfGesture (newValue);
+    if (onUserChange)
+        onUserChange (oldValue, newValue);
     sendStatus();
 }
 
@@ -122,7 +130,7 @@ void ParamControl::mouseUp (const MouseEvent&)
 void ParamControl::mouseDoubleClick (const MouseEvent& e)
 {
     if (isEnabled() && ! e.mods.isPopupMenu())
-        setValueFromUser (param.convertFrom0to1 (param.getDefaultValue()));
+        setValueFromUser (resetValue.has_value() ? *resetValue : param.convertFrom0to1 (param.getDefaultValue()));
 }
 
 void ParamControl::mouseWheelMove (const MouseEvent& e, const MouseWheelDetails& wheel)
@@ -195,7 +203,7 @@ void OttKnob::paint (Graphics& g)
     if (title.isNotEmpty())
         CustomLookAndFeel::drawSmallLabel (g, title, b.removeFromTop (14.0f));
 
-    auto valueArea = b.removeFromBottom (16.0f);
+    auto valueArea = showValue ? b.removeFromBottom (16.0f) : Rectangle<float>();
     const float side = std::min (b.getWidth(), b.getHeight());
     const auto knobArea = b.withSizeKeepingCentre (side, side);
 
@@ -203,6 +211,9 @@ void OttKnob::paint (Graphics& g)
                                                                 param.getNormalisableRange().end, 0.0f))
                                  : 0.0f;
     CustomLookAndFeel::drawKnob (g, knobArea, getProportion(), origin, kRotaryStart, kRotaryEnd, isEnabled());
+
+    if (! showValue)
+        return;
 
     g.setFont (CustomLookAndFeel::uiFont (11.5f, true));
     g.setColour (Colours::black.withAlpha (0.5f));
@@ -295,12 +306,12 @@ bool DynamicsDisplay::bandEnabled (int band) const
 
 bool DynamicsDisplay::showAbove() const
 {
-    return (int) processor.apvts.getRawParameterValue (ott::ParamIDs::displayMode)->load() != ott::DisplayBottom;
+    return true;
 }
 
 bool DynamicsDisplay::showBelow() const
 {
-    return (int) processor.apvts.getRawParameterValue (ott::ParamIDs::displayMode)->load() != ott::DisplayTop;
+    return true;
 }
 
 float DynamicsDisplay::xForDb (float db, const Rectangle<float>& lane) const
@@ -509,7 +520,10 @@ void DynamicsDisplay::paint (Graphics& g)
     for (int b = 0; b < 3; ++b)
         paintLane (g, b, lanes[(size_t) b]);
 
-    // dB scale: 80 .. 0
+    // optional dB scale: 80 .. 0
+    if (scaleArea.isEmpty())
+        return;
+
     g.setFont (CustomLookAndFeel::uiFont (10.5f, true));
     const auto& ref = lanes[0];
     for (int db = -80; db <= 0; db += 10)
@@ -527,128 +541,92 @@ void DynamicsDisplay::paintLane (Graphics& g, int band, Rectangle<float> lane)
 {
     CustomLookAndFeel::drawInsetBox (g, lane.expanded (3.0f, 3.0f), 3.0f);
 
-    // grid
-    g.setColour (Colours::white.withAlpha (0.05f));
-    for (int db = -70; db < 0; db += 10)
-        g.drawVerticalLine ((int) xForDb ((float) db, lane), lane.getY(), lane.getBottom());
-
-    g.setFont (CustomLookAndFeel::uiFont (9.5f, true));
-    g.setColour (Theme::labelText.withAlpha (0.45f));
-    g.drawText (String (ott::bandName (band)).toUpperCase(), lane.reduced (4.0f, 2.0f), Justification::topLeft);
-
     if (! bandEnabled (band))
     {
-        g.setColour (Colours::black.withAlpha (0.35f));
-        g.fillRect (lane);
         g.setFont (CustomLookAndFeel::uiFont (11.0f, true));
         g.setColour (Theme::labelText.withAlpha (0.6f));
         g.drawText ("BAND OFF", lane, Justification::centred);
         return;
     }
 
-    const float aboveDb = get (band, ott::BandIDs::aboveThresh);
-    const float belowDb = get (band, ott::BandIDs::belowThresh);
-    const float ax = xForDb (aboveDb, lane), bx = xForDb (belowDb, lane);
-    const bool above = showAbove(), below = showBelow();
+    const float ax = xForDb (get (band, ott::BandIDs::aboveThresh), lane);
+    const float bx = xForDb (get (band, ott::BandIDs::belowThresh), lane);
 
-    // threshold regions (the strip under the band name)
-    auto regionStrip = lane.withTrimmedTop (lane.getHeight() * 0.18f).withTrimmedBottom (lane.getHeight() * 0.30f);
+    // Upward region (left of the below threshold) and downward region (right of the above threshold),
+    // with the untouched gap between them, as on Xfer's OTT.
+    const auto belowRect = lane.withRight (bx);
+    const auto aboveRect = lane.withLeft (ax);
+    g.setColour (Theme::upRegion);
+    g.fillRect (belowRect);
+    g.setColour (Theme::downRegion.brighter (0.15f));
+    g.fillRect (aboveRect);
+
+    if (hover.band == band && hover.target == Target::BelowRegion) { g.setColour (Colours::white.withAlpha (0.07f)); g.fillRect (belowRect); }
+    if (hover.band == band && hover.target == Target::AboveRegion) { g.setColour (Colours::white.withAlpha (0.07f)); g.fillRect (aboveRect); }
+
+    // faint grid
+    g.setColour (Colours::black.withAlpha (0.18f));
+    for (int db = -70; db < 0; db += 10)
+        g.drawVerticalLine ((int) xForDb ((float) db, lane), lane.getY(), lane.getBottom());
+
+    // ratios
+    g.setFont (CustomLookAndFeel::uiFont (10.0f, true));
+    if (belowRect.getWidth() > 44.0f)
     {
-        auto belowRect = regionStrip.withRight (bx);
-        auto aboveRect = regionStrip.withLeft (ax);
-
-        g.setColour (Theme::upRegion.withAlpha (below ? 0.85f : 0.25f));
-        g.fillRect (belowRect);
-        g.setColour (Theme::downRegion.withAlpha (above ? 0.9f : 0.25f));
-        g.fillRect (aboveRect);
-
-        const bool hoverBelow = hover.band == band && hover.target == Target::BelowRegion;
-        const bool hoverAbove = hover.band == band && hover.target == Target::AboveRegion;
-        if (hoverBelow) { g.setColour (Colours::white.withAlpha (0.06f)); g.fillRect (belowRect); }
-        if (hoverAbove) { g.setColour (Colours::white.withAlpha (0.06f)); g.fillRect (aboveRect); }
-
-        g.setFont (CustomLookAndFeel::uiFont (10.0f, true));
-        if (below && belowRect.getWidth() > 70.0f)
-        {
-            g.setColour (Colour (0xff8fc7ff).withAlpha (0.8f));
-            g.drawText ("1:" + ott::formatRatio (get (band, ott::BandIDs::belowRatio)),
-                        Rectangle<float> (belowRect.getX(), lane.getY(), belowRect.getWidth() - 6.0f, regionStrip.getY() - lane.getY()),
-                        Justification::centredRight);
-        }
-        if (above && aboveRect.getWidth() > 34.0f)
-        {
-            g.setColour (Colour (0xffffc9a0).withAlpha (0.8f));
-            g.drawText (ott::formatRatio (get (band, ott::BandIDs::aboveRatio)) + ":1",
-                        Rectangle<float> (aboveRect.getX() + 6.0f, lane.getY(), aboveRect.getWidth() - 6.0f, regionStrip.getY() - lane.getY()),
-                        Justification::centredLeft);
-        }
+        g.setColour (Colour (0xff8fc7ff).withAlpha (0.75f));
+        g.drawText ("1:" + ott::formatRatio (get (band, ott::BandIDs::belowRatio)),
+                    belowRect.reduced (5.0f, 3.0f), Justification::bottomLeft);
+    }
+    if (aboveRect.getWidth() > 44.0f)
+    {
+        g.setColour (Colour (0xffffc9a0).withAlpha (0.75f));
+        g.drawText (ott::formatRatio (get (band, ott::BandIDs::aboveRatio)) + ":1",
+                    aboveRect.reduced (5.0f, 3.0f), Justification::bottomRight);
     }
 
-    // level meters: input (thick) and band output (thin)
+    // input level: translucent fill and a bright line; band output: thin bar along the bottom
     const auto& m = meterState[(size_t) band];
-    const float meterY = regionStrip.getY() + regionStrip.getHeight() * 0.22f;
-    auto inBar  = Rectangle<float> (lane.getX(), meterY, xForDb (m.in, lane) - lane.getX(), 9.0f);
-    auto outBar = Rectangle<float> (lane.getX(), meterY + 12.0f, xForDb (m.out, lane) - lane.getX(), 5.0f);
-
-    g.setColour (Theme::blueGlow.withAlpha (0.3f));
-    g.fillRect (inBar.expanded (0.0f, 2.0f));
-    g.setColour (Theme::blue);
-    g.fillRect (inBar);
-    g.setColour (Colour (0xffc9e6ff).withAlpha (0.5f));
-    g.fillRect (inBar.withHeight (2.0f));
-    g.setColour (Theme::blue.withAlpha (0.8f));
-    g.fillRect (outBar);
-
-    // gain change: orange tick at the detector level, line to where the compressor moves it
+    const float inX = xForDb (m.in, lane);
+    g.setColour (Theme::blue.withAlpha (0.18f));
+    g.fillRect (lane.withRight (inX));
     if (m.in > ott::kMinDb + 0.5f)
     {
-        const float x0 = xForDb (m.in, lane), x1 = xForDb (m.in + m.gain, lane);
-        const float y = regionStrip.getBottom() - 9.0f;
-        g.setColour (Theme::orange.withAlpha (0.55f));
-        g.drawLine (x0, y, x1, y, 2.0f);
+        g.setColour (Colours::white.withAlpha (0.9f));
+        g.fillRect (inX - 1.0f, lane.getY(), 2.0f, lane.getHeight());
+    }
+    g.setColour (Theme::blue.withAlpha (0.85f));
+    g.fillRect (lane.withTop (lane.getBottom() - 3.0f).withRight (xForDb (m.out, lane)));
+
+    // gain change: orange marker where the compressor moves the level
+    if (m.in > ott::kMinDb + 0.5f && std::abs (m.gain) > 0.1f)
+    {
+        const float x1 = xForDb (m.in + m.gain, lane);
+        const float y = lane.getCentreY();
+        g.setColour (Theme::orange.withAlpha (0.5f));
+        g.drawLine (inX, y, x1, y, 2.0f);
         g.setColour (Theme::orange);
-        g.fillRect (x1 - 1.5f, y - 5.0f, 3.0f, 10.0f);
+        g.fillRect (x1 - 1.5f, y - 6.0f, 3.0f, 12.0f);
     }
 
-    // threshold handles
-    auto drawHandle = [&] (float x, bool shown, bool isHover)
+    // threshold handles (the region edges)
+    auto drawHandle = [&] (float x, bool isHover)
     {
-        if (! shown)
-        {
-            g.setColour (Colours::white.withAlpha (0.15f));
-            g.drawVerticalLine ((int) x, regionStrip.getY(), regionStrip.getBottom());
-            return;
-        }
         const auto colour = isHover ? Colour (0xffffd29a) : Theme::orange;
-        g.setColour (colour.withAlpha (0.25f));
-        g.fillRect (x - 2.5f, regionStrip.getY(), 5.0f, regionStrip.getHeight());
-        g.setColour (colour);
-        g.fillRect (x - 1.0f, regionStrip.getY(), 2.0f, regionStrip.getHeight());
-        Path tab;
-        tab.addTriangle (x - 5.0f, regionStrip.getY() - 1.0f, x + 5.0f, regionStrip.getY() - 1.0f, x, regionStrip.getY() + 5.0f);
-        g.fillPath (tab);
+        g.setColour (colour.withAlpha (isHover ? 0.35f : 0.18f));
+        g.fillRect (x - 2.5f, lane.getY(), 5.0f, lane.getHeight());
+        g.setColour (colour.withAlpha (isHover ? 1.0f : 0.8f));
+        g.fillRect (x - 0.75f, lane.getY(), 1.5f, lane.getHeight());
     };
-    drawHandle (bx, below, hover.band == band && hover.target == Target::BelowHandle);
-    drawHandle (ax, above, hover.band == band && hover.target == Target::AboveHandle);
+    drawHandle (bx, hover.band == band && hover.target == Target::BelowHandle);
+    drawHandle (ax, hover.band == band && hover.target == Target::AboveHandle);
 
-    // gain readout (like "-29.9" in the OTT display) and auto gain
-    auto textRow = lane.withTop (regionStrip.getBottom() + 2.0f).reduced (4.0f, 0.0f);
-    g.setFont (CustomLookAndFeel::uiFont (14.0f, true));
-    g.setColour (Theme::blue);
-    const String gainText = (m.gain >= 0.05f ? "+" : "") + String (m.gain, 1);
-    g.drawText (gainText, textRow, Justification::centredLeft);
-
-    if (std::abs (m.autoGain) > 0.0f || get (band, ott::BandIDs::autoGain) >= 0.5f)
-    {
-        g.setFont (CustomLookAndFeel::uiFont (10.5f, true));
-        g.setColour (Theme::labelText);
-        g.drawText ("AUTO GAIN " + String (m.autoGain >= 0.0f ? "+" : "") + String (m.autoGain, 1) + " dB",
-                    textRow.withTrimmedLeft (56.0f), Justification::centredLeft);
-    }
-
-    g.setFont (CustomLookAndFeel::uiFont (10.0f, true));
-    g.setColour (Theme::labelText.withAlpha (0.8f));
-    g.drawText ("OUT " + (m.out <= ott::kMinDb + 0.1f ? String ("-inf") : String (m.out, 1)), textRow, Justification::centredRight);
+    // gain change readout, top left
+    g.setFont (CustomLookAndFeel::uiFont (11.0f, true));
+    g.setColour (Colours::white.withAlpha (0.85f));
+    String text = (m.gain >= 0.05f ? "+" : "") + String (m.gain, 1) + " dB";
+    if (get (band, ott::BandIDs::autoGain) >= 0.5f)
+        text << "   AUTO " << (m.autoGain >= 0.0f ? "+" : "") << String (m.autoGain, 1);
+    g.drawText (text, lane.reduced (5.0f, 3.0f), Justification::topLeft);
 }
 
 //==============================================================================
@@ -673,22 +651,21 @@ void HelpOverlay::paint (Graphics& g)
 {
     g.fillAll (Colours::black.withAlpha (0.72f));
 
-    auto box = getLocalBounds().toFloat().reduced (60.0f, 30.0f);
+    auto box = getLocalBounds().toFloat().reduced (12.0f, 60.0f);
     CustomLookAndFeel::drawPanel (g, box, "OTT - Quick Help");
 
     const char* lines[] =
     {
-        "Three-band upward + downward compressor with a linear-phase crossover (no phase shift at the splits).",
-        "SPLIT FREQ:  High / Low switch the outer bands on or off and set the split points. Mid fills the rest.",
-        "Power = band on (off passes the band untouched).  S = solo.  AUTO GAIN = keep the band's loudness level.",
-        "INPUT drives each band into the compressor, OUTPUT sets each band's level afterwards.",
-        "DISPLAY:  drag the orange handles to set the above (downward) and below (upward) thresholds.",
-        "Drag up/down inside a coloured region, or use the wheel, to set its ratio.  T / B / A = top, bottom, all.",
-        "ATT / REL:  attack and release per band.  TIME scales them all.  AMOUNT scales the compression.",
-        "UPWARD / DOWNWARD scale each direction (as on Xfer OTT).  MIX blends in the dry signal.",
-        "SOFT KNEE rounds the threshold corners.  RMS = average detection, off = peak.",
-        "Knobs and values: drag (shift = fine), wheel = 1.0 steps, shift + wheel = 0.1, double-click = default,",
-        "right-click = type a value.  Drag the bottom-right corner or use SIZE to resize the window.",
+        "Three-band upward + downward compressor (OTT style).",
+        "DEPTH = dry/wet.  TIME scales every attack and release.  IN GAIN drives all bands.",
+        "LINK: turning IN GAIN up turns OUT GAIN down by the same amount (and the other way).",
+        "BANDS: drag a region's edge to set its threshold, drag inside it (or wheel) to set its ratio.",
+        "Left (blue) = below threshold, raised upward.  Right (brown) = above threshold, pushed down.",
+        "The knob and number on each row are the band's output gain.",
+        "UPWARD / DOWNWARD scale each direction.  LINEAR PHASE: on = no phase shift (43 ms latency),",
+        "off = zero latency.  ADVANCED: split points, band input, attack/release, solo, auto gain.",
+        "Knobs: drag (shift = fine), wheel = 1.0 steps, shift + wheel = 0.1, double-click = reset",
+        "(gain knobs reset to 0 dB), right-click = type a value.  Drag the corner or use SIZE to resize.",
         "",
         "Click anywhere to close."
     };
@@ -698,6 +675,6 @@ void HelpOverlay::paint (Graphics& g)
     for (auto* line : lines)
     {
         g.setColour (String (line).startsWith ("Click") ? Theme::blue : Colour (0xffdfe3e6));
-        g.drawFittedText (line, text.removeFromTop (22.0f).toNearestInt(), Justification::centredLeft, 1, 0.8f);
+        g.drawFittedText (line, text.removeFromTop (24.0f).toNearestInt(), Justification::centredLeft, 1, 0.8f);
     }
 }

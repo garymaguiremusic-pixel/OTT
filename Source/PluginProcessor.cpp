@@ -29,12 +29,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout OttAudioProcessor::createPar
 
     // Global
     boolParam (ParamIDs::bypass, "Bypass", false);
-    floatParam (ParamIDs::output,   "Output",   { -24.0f, 24.0f }, 0.0f, db);
+    floatParam (ParamIDs::inGain,   "In Gain",  { -24.0f, 24.0f }, 0.0f, db);
+    floatParam (ParamIDs::output,   "Out Gain", { -24.0f, 24.0f }, 0.0f, db);
+    boolParam (ParamIDs::inOutLink, "In/Out Link", true);
+    boolParam (ParamIDs::linearPhase, "Linear Phase", true);
     floatParam (ParamIDs::time,     "Time",     logRange (20.0f, 500.0f, 100.0f), 100.0f, percent);
     floatParam (ParamIDs::amount,   "Amount",   { 0.0f, 100.0f }, 100.0f, percent);
     floatParam (ParamIDs::upward,   "Upward",   { 0.0f, 100.0f }, 100.0f, percent);
     floatParam (ParamIDs::downward, "Downward", { 0.0f, 100.0f }, 100.0f, percent);
-    floatParam (ParamIDs::mix,      "Mix",      { 0.0f, 100.0f }, 100.0f, percent);
+    floatParam (ParamIDs::mix,      "Depth",      { 0.0f, 100.0f }, 100.0f, percent);
     boolParam (ParamIDs::softKnee, "Soft Knee", true);
     boolParam (ParamIDs::rms, "RMS", true);
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamIDs::displayMode, 1 }, "Display Mode",
@@ -116,13 +119,18 @@ bool OttAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) cons
 void OttAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     maxBlock = std::max (32, samplesPerBlock);
+    currentSampleRate = sampleRate;
     const int numCh = std::max (1, std::min (2, getTotalNumOutputChannels()));
 
     crossover.prepare (sampleRate, maxBlock, numCh,
                        param (ParamIDs::lowFreq), paramOn (ParamIDs::lowOn),
                        param (ParamIDs::highFreq), paramOn (ParamIDs::highOn));
-    setLatencySamples (crossover.getLatency());
-    latencyMs.store (1000.0f * (float) crossover.getLatency() / (float) sampleRate);
+    minPhaseCrossover.prepare (sampleRate, maxBlock, numCh);
+
+    linearActive = paramOn (ParamIDs::linearPhase);
+    updateLatency (linearActive);
+    modeFade.reset (sampleRate, 0.01);
+    modeFade.setCurrentAndTargetValue (1.0f);
 
     inputChunk.setSize (numCh, maxBlock);
     dryDelayed.setSize (numCh, maxBlock);
@@ -137,6 +145,8 @@ void OttAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     mixSmoothed.setCurrentAndTargetValue (param (ParamIDs::mix) * 0.01f);
     bypassMix.reset (sampleRate, 0.03);
     bypassMix.setCurrentAndTargetValue (paramOn (ParamIDs::bypass) ? 1.0f : 0.0f);
+    inputGain.reset (sampleRate, 0.02);
+    inputGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (param (ParamIDs::inGain)));
     outputGain.reset (sampleRate, 0.02);
     outputGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (param (ParamIDs::output)));
     for (auto& s : bandSoloGain)
@@ -149,6 +159,15 @@ void OttAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 void OttAudioProcessor::releaseResources()
 {
     crossover.reset();
+    minPhaseCrossover.reset();
+}
+
+void OttAudioProcessor::updateLatency (bool linear)
+{
+    const int samples = linear ? crossover.getLatency() : 0;
+    reportedLinear = linear;
+    setLatencySamples (samples);
+    latencyMs.store (1000.0f * (float) samples / (float) currentSampleRate);
 }
 
 void OttAudioProcessor::timerCallback()
@@ -156,6 +175,10 @@ void OttAudioProcessor::timerCallback()
     // Filter design runs here, on the message thread; the audio thread just picks it up.
     crossover.updateSettings (param (ParamIDs::lowFreq), paramOn (ParamIDs::lowOn),
                               param (ParamIDs::highFreq), paramOn (ParamIDs::highOn));
+
+    // Linear phase on/off changes the latency; tell the host from the message thread.
+    if (currentSampleRate > 0.0 && paramOn (ParamIDs::linearPhase) != reportedLinear)
+        updateLatency (paramOn (ParamIDs::linearPhase));
 }
 
 void OttAudioProcessor::updateBandSettings()
@@ -214,6 +237,30 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     mixSmoothed.setTargetValue (anySolo ? 1.0f : param (ParamIDs::mix) * 0.01f);
     bypassMix.setTargetValue (paramOn (ParamIDs::bypass) ? 1.0f : 0.0f);
     outputGain.setTargetValue (juce::Decibels::decibelsToGain (param (ParamIDs::output)));
+    inputGain.setTargetValue (juce::Decibels::decibelsToGain (param (ParamIDs::inGain)));
+
+    // Switching linear phase on/off: fade out, swap crossovers, fade back in.
+    const bool wantLinear = paramOn (ParamIDs::linearPhase);
+    if (wantLinear != linearActive && ! modeFade.isSmoothing())
+    {
+        if (modeFade.getTargetValue() > 0.5f)
+        {
+            modeFade.setTargetValue (0.0f);
+        }
+        else
+        {
+            linearActive = wantLinear;
+            if (linearActive) crossover.reset();
+            else              minPhaseCrossover.reset();
+            for (auto& c : compressors)
+                c.reset();
+            modeFade.setTargetValue (1.0f);
+        }
+    }
+    else if (wantLinear == linearActive && ! modeFade.isSmoothing() && modeFade.getTargetValue() < 0.5f)
+    {
+        modeFade.setTargetValue (1.0f);
+    }
 
     // Process in chunks no longer than the prepared block size.
     for (int start = 0; start < buffer.getNumSamples(); start += maxBlock)
@@ -222,8 +269,14 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 
         for (int ch = 0; ch < numCh; ++ch)
             inputChunk.copyFrom (ch, 0, buffer, ch, start, n);
+        inputGain.applyGain (inputChunk, n);
 
-        crossover.process (inputChunk, n, bands[BandLow], bands[BandMid], bands[BandHigh], dryDelayed);
+        if (linearActive)
+            crossover.process (inputChunk, n, bands[BandLow], bands[BandMid], bands[BandHigh], dryDelayed);
+        else
+            minPhaseCrossover.process (inputChunk, n, bands[BandLow], bands[BandMid], bands[BandHigh], dryDelayed,
+                                       param (ParamIDs::lowFreq), paramOn (ParamIDs::lowOn),
+                                       param (ParamIDs::highFreq), paramOn (ParamIDs::highOn));
 
         for (int b = 0; b < NumBands; ++b)
             compressors[(size_t) b].process (bands[(size_t) b].getArrayOfWritePointers(), numCh, n);
@@ -236,6 +289,7 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             const float mix = mixSmoothed.getNextValue();
             const float out = outputGain.getNextValue();
             const float byp = bypassMix.getNextValue();
+            const float fade = modeFade.getNextValue();
 
             for (int ch = 0; ch < numCh; ++ch)
             {
@@ -244,7 +298,7 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                                 + gM * bands[BandMid].getSample (ch, i)
                                 + gL * bands[BandLow].getSample (ch, i);
                 const float processed = (dry + mix * (wet - dry)) * out;
-                buffer.setSample (ch, start + i, processed + byp * (dry - processed));
+                buffer.setSample (ch, start + i, fade * (processed + byp * (dry - processed)));
             }
         }
     }
@@ -279,13 +333,14 @@ void OttAudioProcessor::setCurrentProgram (int index)
 
     currentProgram.store (index);
 
-    // Everything back to the OTT defaults (but keep bypass and the display mode), then apply the preset.
+    // Everything back to the OTT defaults (but keep bypass, linear phase and the link), then apply the preset.
     for (auto* p : getParameters())
     {
         if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (p))
         {
             const auto& id = ranged->getParameterID();
-            if (id == ParamIDs::bypass || id == ParamIDs::displayMode)
+            if (id == ParamIDs::bypass || id == ParamIDs::displayMode
+                || id == ParamIDs::linearPhase || id == ParamIDs::inOutLink)
                 continue;
             ranged->setValueNotifyingHost (ranged->getDefaultValue());
         }
