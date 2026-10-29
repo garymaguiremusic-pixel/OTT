@@ -333,6 +333,9 @@ float DynamicsDisplay::dbForX (float x, const Rectangle<float>& lane) const
 
 DynamicsDisplay::Hit DynamicsDisplay::findHit (Point<float> p) const
 {
+    if (compact)
+        return {};
+
     for (int band = 0; band < 3; ++band)
     {
         const auto& lane = lanes[(size_t) band];
@@ -550,6 +553,12 @@ void DynamicsDisplay::paintLane (Graphics& g, int band, Rectangle<float> lane)
 {
     CustomLookAndFeel::drawInsetBox (g, lane.expanded (3.0f, 3.0f), 3.0f);
 
+    if (compact)
+    {
+        paintCompactLane (g, band, lane);
+        return;
+    }
+
     if (! bandEnabled (band))
     {
         g.setFont (CustomLookAndFeel::uiFont (11.0f, true));
@@ -624,6 +633,64 @@ void DynamicsDisplay::paintLane (Graphics& g, int band, Rectangle<float> lane)
     g.drawText (text, lane.reduced (5.0f, 2.0f), Justification::topRight);
 }
 
+void DynamicsDisplay::paintCompactLane (Graphics& g, int band, Rectangle<float> lane)
+{
+    if (! bandEnabled (band))
+    {
+        g.setFont (CustomLookAndFeel::uiFont (10.5f, true));
+        g.setColour (Theme::labelText.withAlpha (0.6f));
+        g.drawText ("BAND OFF", lane, Justification::centred);
+        return;
+    }
+
+    const auto& m = meterState[(size_t) band];
+    auto textArea = lane.removeFromRight (64.0f);
+    const auto meter = lane.reduced (2.0f, 0.0f);
+    const auto strip = meter.withSizeKeepingCentre (meter.getWidth(), 8.0f);
+
+    // faint dB ticks every 10 dB
+    g.setColour (Colours::white.withAlpha (0.06f));
+    for (int db = -70; db < 0; db += 10)
+        g.drawVerticalLine ((int) xForDb ((float) db, meter), meter.getY() + 2.0f, meter.getBottom() - 2.0f);
+
+    g.setColour (Colours::black.withAlpha (0.35f));
+    g.fillRect (strip);
+
+    if (m.in > ott::kMinDb + 0.5f)
+    {
+        const float inX = xForDb (m.in, meter);
+        const float endX = xForDb (m.in + m.gain, meter);
+        g.setColour (Colours::white.withAlpha (0.28f));
+        g.fillRect (strip.withRight (std::min (inX, endX)));
+        if (std::abs (endX - inX) > 0.5f)
+        {
+            g.setColour (endX < inX ? Theme::orange.withAlpha (0.85f) : Colour (0xff8fc7ff).withAlpha (0.85f));
+            g.fillRect (Rectangle<float>::leftTopRightBottom (std::min (inX, endX), strip.getY(), std::max (inX, endX), strip.getBottom()));
+        }
+        g.setColour (Colours::white);
+        g.fillRect (endX - 1.0f, strip.getY() - 3.0f, 2.0f, strip.getHeight() + 6.0f);
+    }
+
+    // gain change readout
+    g.setColour (Colours::white.withAlpha (0.08f));
+    g.drawVerticalLine ((int) textArea.getX(), textArea.getY() + 3.0f, textArea.getBottom() - 3.0f);
+    g.setFont (CustomLookAndFeel::uiFont (11.0f, true));
+    g.setColour (Colours::white.withAlpha (0.8f));
+    const String text = (m.gain >= 0.05f ? "+" : "") + String (m.gain, 1) + " dB";
+    if (get (band, ott::BandIDs::autoGain) >= 0.5f)
+    {
+        g.drawText (text, textArea.withTrimmedBottom (textArea.getHeight() * 0.45f), Justification::centredBottom);
+        g.setFont (CustomLookAndFeel::uiFont (10.0f, true));
+        g.setColour (Theme::blue);
+        g.drawText ("A " + String (m.makeup >= 0.0f ? "+" : "") + String (m.makeup, 1),
+                    textArea.withTrimmedTop (textArea.getHeight() * 0.55f), Justification::centredTop);
+    }
+    else
+    {
+        g.drawText (text, textArea, Justification::centred);
+    }
+}
+
 //==============================================================================
 // HelpButton / HelpOverlay
 //==============================================================================
@@ -655,16 +722,14 @@ void HelpOverlay::paint (Graphics& g)
         "DEPTH = dry/wet.  TIME scales every attack and release.  IN GAIN drives all bands.",
         "LINK: turning IN GAIN up turns OUT GAIN down by the same amount (keeps the level matched).",
         "AUTO GAIN: keeps the output as loud (K-weighted, like LUFS) as what comes into the plugin.",
+        "BANDS: AMOUNT knob = how much of that band's compression is used (0 = none, 150 % = extra).",
+        "Meter: grey = level in, orange = pushed down, blue = lifted up.  Right knob = band output.",
         "S = solo a band.  A = band auto gain: keeps that band's level when you change its compression.",
+        "UPWARD / DOWNWARD scale each direction.  LINEAR PHASE: on = no phase shift (43 ms latency).",
+        "ADVANCED: split frequencies and slope, and Threshold / Attack / Release for each band.",
         "RANDOM: new random settings (Bypass, Solo, Linear Phase, LINK and Auto Gain stay as they are).",
-        "BANDS: drag a region's edge to set its threshold, drag inside it (or wheel) to set its ratio.",
-        "Left (blue) = below threshold, raised upward.  Right (brown) = above threshold, pushed down.",
-        "The knob and number on each row are the band's output gain.",
-        "UPWARD / DOWNWARD scale each direction (at 0 that side disappears from the bars).",
-        "LINEAR PHASE: on = no phase shift (43 ms latency), off = zero latency.",
-        "ADVANCED: split frequencies, and Threshold / Attack / Release for each band.",
-        "Knobs: drag (shift = fine), wheel = 1.0 steps, shift + wheel = 0.1, double-click = reset",
-        "(gain knobs reset to 0 dB), right-click = type a value.  Drag the corner or use SIZE to resize.",
+        "Knobs: drag (shift = fine), wheel = 1.0 steps, shift + wheel = 0.1, double-click = reset,",
+        "right-click = type a value.  Drag the corner or use SIZE to resize.",
         "",
         "Click anywhere to close."
     };

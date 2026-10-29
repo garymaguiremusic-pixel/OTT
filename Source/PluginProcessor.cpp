@@ -62,6 +62,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout OttAudioProcessor::createPar
         floatParam (bandParam (b, BandIDs::input),  n + " Input",  { -24.0f, 24.0f }, d.input, db);
         floatParam (bandParam (b, BandIDs::output), n + " Output", { -24.0f, 24.0f }, d.output, db);
         boolParam  (bandParam (b, BandIDs::active),   n + " Active", true);
+        floatParam (bandParam (b, BandIDs::amount), n + " Amount", { 0.0f, 150.0f }, 100.0f,
+                    [] (float v) { return String (v, 1) + " %"; });
         boolParam  (bandParam (b, BandIDs::solo),     n + " Solo", false);
         floatParam (bandParam (b, BandIDs::threshold), n + " Threshold", { -40.0f, 24.0f }, 0.0f,
                     [] (float v) { return (v > 0.0f ? "+" : "") + formatDb (v, 1); });
@@ -258,6 +260,7 @@ void OttAudioProcessor::updateBandSettings()
         s.releaseMs   = param (bandParam (b, BandIDs::release));
         s.autoRelease = paramOn (bandParam (b, BandIDs::autoRelease));
         s.autoGain    = paramOn (bandParam (b, BandIDs::autoGain));
+        s.amount      = param (bandParam (b, BandIDs::amount)) * 0.01f;
         const float offset = param (bandParam (b, BandIDs::threshold));
         s.aboveThresh = param (bandParam (b, BandIDs::aboveThresh)) + offset;
         s.aboveRatio  = param (bandParam (b, BandIDs::aboveRatio));
@@ -504,6 +507,7 @@ void OttAudioProcessor::randomise()
         set (bandParam (b, BandIDs::release),     logUniform (20.0f, 1000.0f));
         set (bandParam (b, BandIDs::autoRelease), chance (0.3f));
         set (bandParam (b, BandIDs::autoGain),    chance (0.5f));
+        set (bandParam (b, BandIDs::amount),      uniform (40.0f, 130.0f));
     }
 
     isRandomised.store (true);

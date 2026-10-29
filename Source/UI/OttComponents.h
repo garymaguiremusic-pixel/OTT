@@ -133,6 +133,9 @@ public:
 
     std::function<void (const juce::String&)> onStatus;
 
+    /** Compact: each lane is just a level / gain-change meter (no threshold areas or handles). */
+    bool compact = false;
+
     void paint (juce::Graphics&) override;
     juce::String getTooltip() override;
     void mouseMove (const juce::MouseEvent&) override;
@@ -159,6 +162,7 @@ private:
     void setParam (juce::RangedAudioParameter&, float value);   // clamps thresholds against each other
     juce::String describe (const Hit&) const;
     void paintLane (juce::Graphics&, int band, juce::Rectangle<float> lane);
+    void paintCompactLane (juce::Graphics&, int band, juce::Rectangle<float> lane);
 
     OttAudioProcessor& processor;
     std::array<juce::Rectangle<float>, 3> lanes;

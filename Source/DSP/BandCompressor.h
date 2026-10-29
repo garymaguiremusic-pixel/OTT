@@ -15,7 +15,8 @@ namespace ott
       - Above threshold / ratio: downward compression (ratio "inf" = limiting).
       - Below threshold / ratio: upward compression (quiet signals are raised
         towards the threshold, capped at +36 dB).
-      - Upward and Downward scale the gain change in dB.
+      - Upward and Downward scale the gain change in dB; the band's Amount scales
+        all of it (0 = no compression on this band, 1 = full, up to 1.5 for extra squash).
       - Time scales attack and release.
       - Auto release (program dependent): two gain envelopes, a fast one (60 ms
         release) and a slow one (250 ms attack, 1.2 s release); the band follows
@@ -39,7 +40,7 @@ public:
         float attackMs = 10.0f, releaseMs = 100.0f;
         float aboveThresh = -30.0f, aboveRatio = 4.0f;
         float belowThresh = -40.0f, belowRatio = 4.0f;
-        float upward = 1.0f, downward = 1.0f, timeScale = 1.0f;
+        float upward = 1.0f, downward = 1.0f, timeScale = 1.0f, amount = 1.0f;
         bool active = true, softKnee = true, rms = true, autoRelease = false, autoGain = false;
     };
 
@@ -80,6 +81,7 @@ public:
         const bool curveChanged = ! exactlyEqual (s.aboveThresh, settings.aboveThresh) || ! exactlyEqual (s.belowThresh, settings.belowThresh)
                                || ! exactlyEqual (s.aboveRatio, settings.aboveRatio) || ! exactlyEqual (s.belowRatio, settings.belowRatio)
                                || ! exactlyEqual (s.upward, settings.upward) || ! exactlyEqual (s.downward, settings.downward)
+                               || ! exactlyEqual (s.amount, settings.amount)
                                || s.softKnee != settings.softKnee || s.rms != settings.rms;
         const bool switchedOn = s.autoGain && ! settings.autoGain;
         settings = s;
@@ -125,7 +127,7 @@ public:
             up = upSlope * under;
 
         up = std::min (up, kMaxBoostDb);
-        return settings.downward * down + settings.upward * up;
+        return settings.amount * (settings.downward * down + settings.upward * up);
     }
 
     /** Processes one band in place. `numChannels` is 1 or 2. */

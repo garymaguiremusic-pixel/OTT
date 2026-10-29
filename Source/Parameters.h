@@ -57,6 +57,7 @@ namespace BandIDs
     inline constexpr auto active      = "active";
     inline constexpr auto solo        = "solo";
     inline constexpr auto threshold   = "threshold";   // offset applied to both thresholds
+    inline constexpr auto amount      = "amount";      // 0..150 %: how much of the band's compression is used
     inline constexpr auto attack      = "attack";
     inline constexpr auto release     = "release";
     inline constexpr auto autoRelease = "autoRelease";

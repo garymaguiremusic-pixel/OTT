@@ -15,7 +15,7 @@ namespace
 
     constexpr int kBandRowY[ott::NumBands] = { 220, 296, 372 };   // High, Mid, Low
     constexpr int kBandRowH = 64;
-    const Rectangle<int> displayBounds { 92, 214, 324, 228 };
+    const Rectangle<int> displayBounds { 122, 214, 252, 228 };
 
     // Advanced page (coordinates inside the page, which starts below the top strip)
     constexpr int kAdvTop = kTopStripH;
@@ -118,6 +118,12 @@ OttAudioProcessorEditor::OttAudioProcessorEditor (OttAudioProcessor& proc)
             content.addAndMakeVisible (*c);
         }
 
+        amountKnobs[(size_t) b] = std::make_unique<OttKnob> (p (ott::bandParam (b, ott::BandIDs::amount)));
+        amountKnobs[(size_t) b]->formatter = [] (float v) { return String (v, 1) + " %"; };
+        amountKnobs[(size_t) b]->resetValue = 100.0f;
+        amountKnobs[(size_t) b]->onStatus = status;
+        content.addAndMakeVisible (*amountKnobs[(size_t) b]);
+
         mainSoloButtons[(size_t) b].setButtonText ("S");
         setupToggle (mainSoloButtons[(size_t) b], ott::bandParam (b, ott::BandIDs::solo),
                      "Solo the " + String (ott::bandName (b)).toLowerCase() + " band", content);
@@ -128,6 +134,7 @@ OttAudioProcessorEditor::OttAudioProcessorEditor (OttAudioProcessor& proc)
     }
 
     display.onStatus = status;
+    display.compact = true;
     content.addAndMakeVisible (display);
 
     setupToggle (linearPhaseButton, ott::ParamIDs::linearPhase,
@@ -328,11 +335,12 @@ void OttAudioProcessorEditor::layoutContent()
     for (int b = 0; b < ott::NumBands; ++b)
     {
         const int r = kBandRowY[b];
-        bandGainFields[(size_t) b]->setBounds (8, r + 20, 40, 24);
-        mainSoloButtons[(size_t) b].setBounds (51, r + 21, 21, 22);
-        bandAutoGainButtons[(size_t) b].setBounds (74, r + 21, 21, 22);
+        mainSoloButtons[(size_t) b].setBounds (16, r + 7, 24, 22);
+        bandAutoGainButtons[(size_t) b].setBounds (16, r + 35, 24, 22);
+        amountKnobs[(size_t) b]->setBounds (46, r - 3, 70, 70);
+        bandGainFields[(size_t) b]->setBounds (376, r + 20, 42, 24);
         bandGainKnobs[(size_t) b]->setBounds (420, r + 4, 56, 56);
-        lanes[(size_t) b] = { 8.0f, (float) (r - displayBounds.getY() + 8), 308.0f, (float) (kBandRowH - 16) };
+        lanes[(size_t) b] = { 8.0f, (float) (r - displayBounds.getY() + 16), 236.0f, 32.0f };
     }
     display.setLaneBounds (lanes, {});
 
@@ -408,7 +416,7 @@ void OttAudioProcessorEditor::timerCallback()
                               (Component*) thresholdFields[i].get(), (Component*) attackFields[i].get(), (Component*) releaseFields[i].get(),
                               (Component*) &powerButtons[i], (Component*) &soloButtons[i],
                               (Component*) &mainSoloButtons[i], (Component*) &autoReleaseButtons[i],
-                              (Component*) &bandAutoGainButtons[i] })
+                              (Component*) &bandAutoGainButtons[i], (Component*) amountKnobs[i].get() })
             if (c->isEnabled() != on)
                 c->setEnabled (on);
 
@@ -642,7 +650,7 @@ void OttAudioProcessorEditor::paintAdvanced (Graphics& g)
     // a short note in the empty space
     g.setFont (CustomLookAndFeel::uiFont (11.0f));
     g.setColour (Theme::labelText.withAlpha (0.8f));
-    g.drawFittedText ("THRESHOLD moves both edges of the band's bar together.\n"
-                      "Drag an edge on the main view to move just that one.",
+    g.drawFittedText ("THRESHOLD moves where the band starts compressing (both its upward and downward\n"
+                      "thresholds together). The AMOUNT knobs on the main view set how much is used.",
                       Rectangle<int> (16, 436, 488, 40), Justification::centredLeft, 2);
 }

@@ -66,7 +66,7 @@ private:
     std::unique_ptr<OttKnob> depthKnob, timeKnob, inGainKnob, outGainKnob, upwardKnob, downwardKnob;
     juce::TextButton linkButton { "LINK" }, autoGainButton { "Auto Gain" };
     std::array<std::unique_ptr<ValueField>, ott::NumBands> bandGainFields;
-    std::array<std::unique_ptr<OttKnob>, ott::NumBands> bandGainKnobs;
+    std::array<std::unique_ptr<OttKnob>, ott::NumBands> bandGainKnobs, amountKnobs;
     std::array<juce::TextButton, ott::NumBands> mainSoloButtons, bandAutoGainButtons;
     DynamicsDisplay display;
     juce::TextButton linearPhaseButton { "Linear Phase" }, softKneeButton { "Soft Knee" }, rmsButton { "RMS" };
