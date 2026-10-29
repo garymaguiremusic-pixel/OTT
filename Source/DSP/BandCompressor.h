@@ -1,0 +1,209 @@
+#pragma once
+
+#include <juce_audio_basics/juce_audio_basics.h>
+#include "../Parameters.h"
+
+namespace ott
+{
+
+//==============================================================================
+/**
+    One band of the OTT: upward + downward compression on a stereo-linked
+    detector, in the style of Ableton's Multiband Dynamics.
+
+      - Above threshold / ratio: downward compression (ratio "inf" = limiting).
+      - Below threshold / ratio: upward compression (quiet signals are raised
+        towards the threshold, capped at +36 dB).
+      - Amount, Upward and Downward scale the gain change in dB.
+      - Time scales attack and release.
+      - Auto gain matches the band's long-term loudness after compression to its
+        loudness before the band's input gain, so drive changes the sound but
+        not the level.
+*/
+class BandCompressor
+{
+public:
+    struct Settings
+    {
+        float inputDb = 0.0f, outputDb = 0.0f;
+        float attackMs = 10.0f, releaseMs = 100.0f;
+        float aboveThresh = -30.0f, aboveRatio = 4.0f;
+        float belowThresh = -40.0f, belowRatio = 4.0f;
+        float amount = 1.0f, upward = 1.0f, downward = 1.0f, timeScale = 1.0f;
+        bool active = true, autoGain = false, softKnee = true, rms = true;
+    };
+
+    struct Meter
+    {
+        float inputDb = kMinDb;   // detector level (after input gain)
+        float outputDb = kMinDb;  // band output peak
+        float gainDb = 0.0f;      // gain change applied by the compressor
+    };
+
+    void prepare (double fs)
+    {
+        sampleRate = fs;
+        inGain.reset (fs, 0.02);
+        outGain.reset (fs, 0.02);
+        activeMix.reset (fs, 0.03);
+        rmsAlpha = 1.0f - coefFor (10.0f);
+        agAlpha = 1.0f - coefFor (500.0f);
+        reset();
+    }
+
+    void reset()
+    {
+        envMs = 0.0f;
+        gainDb = 0.0f;
+        msIn = msOut = 0.0f;
+        autoGainDb = 0.0f;
+        inGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (settings.inputDb));
+        outGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (settings.outputDb));
+        activeMix.setCurrentAndTargetValue (settings.active ? 1.0f : 0.0f);
+    }
+
+    void setSettings (const Settings& s)
+    {
+        settings = s;
+        inGain.setTargetValue (juce::Decibels::decibelsToGain (s.inputDb));
+        outGain.setTargetValue (juce::Decibels::decibelsToGain (s.outputDb));
+        activeMix.setTargetValue (s.active ? 1.0f : 0.0f);
+
+        const float t = std::max (0.01f, s.timeScale);
+        attackCoef  = coefFor (std::max (0.01f, s.attackMs * t));
+        releaseCoef = coefFor (std::max (0.1f,  s.releaseMs * t));
+
+        knee = s.softKnee ? 10.0f : 0.0f;
+        downSlope = s.aboveRatio >= kRatioInf ? 1.0f : 1.0f - 1.0f / std::max (1.0f, s.aboveRatio);
+        upSlope   = s.belowRatio >= kRatioInf ? 1.0f : 1.0f - 1.0f / std::max (1.0f, s.belowRatio);
+    }
+
+    /** Static gain curve in dB for a detector level in dB (before attack/release). */
+    float computeGainDb (float levelDb) const noexcept
+    {
+        const float x = juce::jlimit (kMinDb, 24.0f, levelDb);
+
+        // downward, above threshold
+        float down = 0.0f;
+        const float over = x - settings.aboveThresh;
+        if (knee > 0.0f && std::abs (over) * 2.0f <= knee)
+            down = -downSlope * (over + knee * 0.5f) * (over + knee * 0.5f) / (2.0f * knee);
+        else if (over > 0.0f)
+            down = -downSlope * over;
+
+        // upward, below threshold
+        float up = 0.0f;
+        const float under = settings.belowThresh - x;
+        if (knee > 0.0f && std::abs (under) * 2.0f <= knee)
+            up = upSlope * (under + knee * 0.5f) * (under + knee * 0.5f) / (2.0f * knee);
+        else if (under > 0.0f)
+            up = upSlope * under;
+
+        up = std::min (up, kMaxBoostDb);
+        return settings.amount * (settings.downward * down + settings.upward * up);
+    }
+
+    /** Processes one band in place. `numChannels` is 1 or 2. */
+    void process (float* const* data, int numChannels, int numSamples)
+    {
+        float* l = data[0];
+        float* r = numChannels > 1 ? data[1] : data[0];
+        const float chanNorm = numChannels > 1 ? 0.5f : 1.0f;
+
+        float maxLevelDb = kMinDb, maxOut = 0.0f;
+        const float agStart = juce::Decibels::decibelsToGain (autoGainDb);
+
+        // Auto gain target from the previous block's loudness estimates.
+        float agTarget = 0.0f;
+        if (settings.autoGain)
+        {
+            if (msIn > 1.0e-7f && msOut > 1.0e-10f)
+                agTarget = juce::jlimit (-24.0f, 24.0f, 10.0f * std::log10 (msIn / msOut));
+            else
+                agTarget = autoGainDb;   // hold through silence
+        }
+        // Glide towards the target (~200 ms), linearly across the block.
+        const float agBlockCoef = std::exp (-(float) numSamples / (0.2f * (float) sampleRate));
+        autoGainDb = agTarget + (autoGainDb - agTarget) * agBlockCoef;
+        const float agEnd = juce::Decibels::decibelsToGain (autoGainDb);
+        const float agStep = (agEnd - agStart) / (float) std::max (1, numSamples);
+        float ag = agStart;
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float xl = l[i], xr = r[i];
+            msIn += agAlpha * ((xl * xl + xr * xr) * chanNorm - msIn);
+
+            const float gIn = inGain.getNextValue();
+            const float yl = xl * gIn, yr = xr * gIn;
+
+            // stereo-linked detector
+            float levelDb;
+            if (settings.rms)
+            {
+                envMs += rmsAlpha * ((yl * yl + yr * yr) * chanNorm - envMs);
+                levelDb = 10.0f * std::log10 (envMs + 1.0e-12f);
+            }
+            else
+            {
+                levelDb = 20.0f * std::log10 (std::max (std::abs (yl), std::abs (yr)) + 1.0e-9f);
+            }
+            maxLevelDb = std::max (maxLevelDb, levelDb);
+
+            // ballistics on the gain: falling gain = attack, rising gain = release
+            const float target = computeGainDb (levelDb);
+            const float coef = target < gainDb ? attackCoef : releaseCoef;
+            gainDb = target + coef * (gainDb - target);
+
+            const float g = juce::Decibels::decibelsToGain (gainDb, -200.0f);
+            float zl = yl * g, zr = yr * g;
+            msOut += agAlpha * ((zl * zl + zr * zr) * chanNorm - msOut);
+
+            const float post = ag * outGain.getNextValue();
+            ag += agStep;
+            zl *= post;
+            zr *= post;
+
+            // band power button: crossfade to the untouched band
+            const float a = activeMix.getNextValue();
+            l[i] = xl + a * (zl - xl);
+            if (numChannels > 1)
+                r[i] = xr + a * (zr - xr);
+
+            maxOut = std::max (maxOut, std::max (std::abs (l[i]), std::abs (numChannels > 1 ? r[i] : 0.0f)));
+        }
+
+        // denormal guard
+        if (envMs < 1.0e-20f) envMs = 0.0f;
+        if (msIn  < 1.0e-20f) msIn = 0.0f;
+        if (msOut < 1.0e-20f) msOut = 0.0f;
+
+        meter.inputDb = std::max (kMinDb, maxLevelDb);
+        meter.outputDb = std::max (kMinDb, juce::Decibels::gainToDecibels (maxOut, -100.0f));
+        meter.gainDb = settings.active ? gainDb : 0.0f;
+    }
+
+    const Meter& getMeter() const noexcept     { return meter; }
+    float getAutoGainDb() const noexcept       { return settings.autoGain ? autoGainDb : 0.0f; }
+
+private:
+    float coefFor (float ms) const
+    {
+        return std::exp (-1.0f / (0.001f * ms * (float) sampleRate));
+    }
+
+    Settings settings;
+    Meter meter;
+    double sampleRate = 48000.0;
+
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> inGain { 1.0f }, outGain { 1.0f };
+    juce::SmoothedValue<float> activeMix { 1.0f };
+
+    float envMs = 0.0f, gainDb = 0.0f;
+    float attackCoef = 0.0f, releaseCoef = 0.0f, rmsAlpha = 0.0f;
+    float knee = 10.0f, downSlope = 0.0f, upSlope = 0.0f;
+
+    float msIn = 0.0f, msOut = 0.0f, agAlpha = 0.0f, autoGainDb = 0.0f;
+};
+
+} // namespace ott

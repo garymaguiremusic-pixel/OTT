@@ -1,0 +1,333 @@
+#include "PluginProcessor.h"
+#include "PluginEditor.h"
+#include "Presets.h"
+
+using namespace ott;
+
+//==============================================================================
+juce::AudioProcessorValueTreeState::ParameterLayout OttAudioProcessor::createParameterLayout()
+{
+    using namespace juce;
+    AudioProcessorValueTreeState::ParameterLayout layout;
+
+    auto floatParam = [&layout] (const String& id, const String& name, NormalisableRange<float> range, float def,
+                                 std::function<String (float)> toText, std::function<float (const String&)> fromText = nullptr)
+    {
+        auto attributes = AudioParameterFloatAttributes()
+            .withStringFromValueFunction ([toText] (float v, int) { return toText (v); })
+            .withValueFromStringFunction ([fromText] (const String& s) { return fromText ? fromText (s) : s.getFloatValue(); });
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { id, 1 }, name, range, def, attributes));
+    };
+
+    auto boolParam = [&layout] (const String& id, const String& name, bool def)
+    {
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { id, 1 }, name, def));
+    };
+
+    auto db       = [] (float v) { return formatDb (v); };
+    auto percent  = [] (float v) { return formatPercent (v); };
+
+    // Global
+    boolParam (ParamIDs::bypass, "Bypass", false);
+    floatParam (ParamIDs::output,   "Output",   { -24.0f, 24.0f }, 0.0f, db);
+    floatParam (ParamIDs::time,     "Time",     logRange (20.0f, 500.0f, 100.0f), 100.0f, percent);
+    floatParam (ParamIDs::amount,   "Amount",   { 0.0f, 100.0f }, 100.0f, percent);
+    floatParam (ParamIDs::upward,   "Upward",   { 0.0f, 100.0f }, 100.0f, percent);
+    floatParam (ParamIDs::downward, "Downward", { 0.0f, 100.0f }, 100.0f, percent);
+    floatParam (ParamIDs::mix,      "Mix",      { 0.0f, 100.0f }, 100.0f, percent);
+    boolParam (ParamIDs::softKnee, "Soft Knee", true);
+    boolParam (ParamIDs::rms, "RMS", true);
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamIDs::displayMode, 1 }, "Display Mode",
+                                                        StringArray { "Top", "Bottom", "All" }, DisplayTop));
+
+    // Crossover
+    boolParam (ParamIDs::highOn, "High Band On", true);
+    floatParam (ParamIDs::highFreq, "High Split", logRange (500.0f, 16000.0f, 2500.0f), kDefaultHighFreq,
+                [] (float v) { return formatHz (v); }, parseHz);
+    boolParam (ParamIDs::lowOn, "Low Band On", true);
+    floatParam (ParamIDs::lowFreq, "Low Split", logRange (20.0f, 1000.0f, 120.0f), kDefaultLowFreq,
+                [] (float v) { return formatHz (v); }, parseHz);
+
+    // Bands
+    for (int b = 0; b < NumBands; ++b)
+    {
+        const auto& d = ottBandDefaults[(size_t) b];
+        const String n = bandName (b);
+
+        floatParam (bandParam (b, BandIDs::input),  n + " Input",  { -24.0f, 24.0f }, d.input, db);
+        floatParam (bandParam (b, BandIDs::output), n + " Output", { -24.0f, 24.0f }, d.output, db);
+        boolParam  (bandParam (b, BandIDs::active),   n + " Active", true);
+        boolParam  (bandParam (b, BandIDs::solo),     n + " Solo", false);
+        boolParam  (bandParam (b, BandIDs::autoGain), n + " Auto Gain", false);
+        floatParam (bandParam (b, BandIDs::attack),  n + " Attack",  logRange (0.1f, 1000.0f, 20.0f), d.attack,
+                    [] (float v) { return formatMs (v); });
+        floatParam (bandParam (b, BandIDs::release), n + " Release", logRange (1.0f, 5000.0f, 250.0f), d.release,
+                    [] (float v) { return formatMs (v); });
+        floatParam (bandParam (b, BandIDs::aboveThresh), n + " Above Threshold", { kMinDb, 0.0f }, d.aboveThresh, db);
+        floatParam (bandParam (b, BandIDs::aboveRatio),  n + " Above Ratio", logRange (1.0f, kRatioMax, 10.0f), d.aboveRatio,
+                    [] (float v) { return formatRatio (v) + " : 1"; }, parseRatio);
+        floatParam (bandParam (b, BandIDs::belowThresh), n + " Below Threshold", { kMinDb, 0.0f }, d.belowThresh, db);
+        floatParam (bandParam (b, BandIDs::belowRatio),  n + " Below Ratio", logRange (1.0f, kRatioMax, 10.0f), d.belowRatio,
+                    [] (float v) { return "1 : " + formatRatio (v); }, parseRatio);
+    }
+
+    return layout;
+}
+
+//==============================================================================
+OttAudioProcessor::OttAudioProcessor()
+    : AudioProcessor (BusesProperties()
+                          .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
+                          .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+      apvts (*this, nullptr, "OTTSTATE", createParameterLayout())
+{
+    startTimerHz (30);
+}
+
+OttAudioProcessor::~OttAudioProcessor()
+{
+    stopTimer();
+}
+
+float OttAudioProcessor::param (const juce::String& id) const
+{
+    return apvts.getRawParameterValue (id)->load();
+}
+
+bool OttAudioProcessor::paramOn (const juce::String& id) const
+{
+    return param (id) >= 0.5f;
+}
+
+juce::AudioProcessorParameter* OttAudioProcessor::getBypassParameter() const
+{
+    return apvts.getParameter (ParamIDs::bypass);
+}
+
+//==============================================================================
+bool OttAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+{
+    const auto out = layouts.getMainOutputChannelSet();
+    if (out != juce::AudioChannelSet::mono() && out != juce::AudioChannelSet::stereo())
+        return false;
+    return out == layouts.getMainInputChannelSet();
+}
+
+void OttAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
+{
+    maxBlock = std::max (32, samplesPerBlock);
+    const int numCh = std::max (1, std::min (2, getTotalNumOutputChannels()));
+
+    crossover.prepare (sampleRate, maxBlock, numCh,
+                       param (ParamIDs::lowFreq), paramOn (ParamIDs::lowOn),
+                       param (ParamIDs::highFreq), paramOn (ParamIDs::highOn));
+    setLatencySamples (crossover.getLatency());
+    latencyMs.store (1000.0f * (float) crossover.getLatency() / (float) sampleRate);
+
+    inputChunk.setSize (numCh, maxBlock);
+    dryDelayed.setSize (numCh, maxBlock);
+    for (auto& b : bands)
+        b.setSize (numCh, maxBlock);
+
+    updateBandSettings();
+    for (auto& c : compressors)
+        c.prepare (sampleRate);
+
+    mixSmoothed.reset (sampleRate, 0.03);
+    mixSmoothed.setCurrentAndTargetValue (param (ParamIDs::mix) * 0.01f);
+    bypassMix.reset (sampleRate, 0.03);
+    bypassMix.setCurrentAndTargetValue (paramOn (ParamIDs::bypass) ? 1.0f : 0.0f);
+    outputGain.reset (sampleRate, 0.02);
+    outputGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (param (ParamIDs::output)));
+    for (auto& s : bandSoloGain)
+    {
+        s.reset (sampleRate, 0.02);
+        s.setCurrentAndTargetValue (1.0f);
+    }
+}
+
+void OttAudioProcessor::releaseResources()
+{
+    crossover.reset();
+}
+
+void OttAudioProcessor::timerCallback()
+{
+    // Filter design runs here, on the message thread; the audio thread just picks it up.
+    crossover.updateSettings (param (ParamIDs::lowFreq), paramOn (ParamIDs::lowOn),
+                              param (ParamIDs::highFreq), paramOn (ParamIDs::highOn));
+}
+
+void OttAudioProcessor::updateBandSettings()
+{
+    const float amount   = param (ParamIDs::amount) * 0.01f;
+    const float upward   = param (ParamIDs::upward) * 0.01f;
+    const float downward = param (ParamIDs::downward) * 0.01f;
+    const float time     = param (ParamIDs::time) * 0.01f;
+    const bool softKnee  = paramOn (ParamIDs::softKnee);
+    const bool rms       = paramOn (ParamIDs::rms);
+
+    for (int b = 0; b < NumBands; ++b)
+    {
+        BandCompressor::Settings s;
+        s.inputDb     = param (bandParam (b, BandIDs::input));
+        s.outputDb    = param (bandParam (b, BandIDs::output));
+        s.attackMs    = param (bandParam (b, BandIDs::attack));
+        s.releaseMs   = param (bandParam (b, BandIDs::release));
+        s.aboveThresh = param (bandParam (b, BandIDs::aboveThresh));
+        s.aboveRatio  = param (bandParam (b, BandIDs::aboveRatio));
+        s.belowThresh = param (bandParam (b, BandIDs::belowThresh));
+        s.belowRatio  = param (bandParam (b, BandIDs::belowRatio));
+        s.active      = paramOn (bandParam (b, BandIDs::active));
+        s.autoGain    = paramOn (bandParam (b, BandIDs::autoGain));
+        s.amount = amount;
+        s.upward = upward;
+        s.downward = downward;
+        s.timeScale = time;
+        s.softKnee = softKnee;
+        s.rms = rms;
+        compressors[(size_t) b].setSettings (s);
+    }
+}
+
+void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+{
+    juce::ScopedNoDenormals noDenormals;
+
+    const int numCh = std::min (inputChunk.getNumChannels(), buffer.getNumChannels());
+    for (int ch = numCh; ch < buffer.getNumChannels(); ++ch)
+        buffer.clear (ch, 0, buffer.getNumSamples());
+
+    updateBandSettings();
+
+    bool anySolo = false;
+    std::array<bool, NumBands> solo {};
+    for (int b = 0; b < NumBands; ++b)
+    {
+        solo[(size_t) b] = paramOn (bandParam (b, BandIDs::solo));
+        anySolo = anySolo || solo[(size_t) b];
+    }
+    for (int b = 0; b < NumBands; ++b)
+        bandSoloGain[(size_t) b].setTargetValue (! anySolo || solo[(size_t) b] ? 1.0f : 0.0f);
+
+    // Soloing a band always listens to the processed band on its own.
+    mixSmoothed.setTargetValue (anySolo ? 1.0f : param (ParamIDs::mix) * 0.01f);
+    bypassMix.setTargetValue (paramOn (ParamIDs::bypass) ? 1.0f : 0.0f);
+    outputGain.setTargetValue (juce::Decibels::decibelsToGain (param (ParamIDs::output)));
+
+    // Process in chunks no longer than the prepared block size.
+    for (int start = 0; start < buffer.getNumSamples(); start += maxBlock)
+    {
+        const int n = std::min (maxBlock, buffer.getNumSamples() - start);
+
+        for (int ch = 0; ch < numCh; ++ch)
+            inputChunk.copyFrom (ch, 0, buffer, ch, start, n);
+
+        crossover.process (inputChunk, n, bands[BandLow], bands[BandMid], bands[BandHigh], dryDelayed);
+
+        for (int b = 0; b < NumBands; ++b)
+            compressors[(size_t) b].process (bands[(size_t) b].getArrayOfWritePointers(), numCh, n);
+
+        for (int i = 0; i < n; ++i)
+        {
+            const float gH = bandSoloGain[BandHigh].getNextValue();
+            const float gM = bandSoloGain[BandMid].getNextValue();
+            const float gL = bandSoloGain[BandLow].getNextValue();
+            const float mix = mixSmoothed.getNextValue();
+            const float out = outputGain.getNextValue();
+            const float byp = bypassMix.getNextValue();
+
+            for (int ch = 0; ch < numCh; ++ch)
+            {
+                const float dry = dryDelayed.getSample (ch, i);
+                const float wet = gH * bands[BandHigh].getSample (ch, i)
+                                + gM * bands[BandMid].getSample (ch, i)
+                                + gL * bands[BandLow].getSample (ch, i);
+                const float processed = (dry + mix * (wet - dry)) * out;
+                buffer.setSample (ch, start + i, processed + byp * (dry - processed));
+            }
+        }
+    }
+
+    for (int b = 0; b < NumBands; ++b)
+    {
+        const auto& m = compressors[(size_t) b].getMeter();
+        meters[(size_t) b].inputDb.store (m.inputDb);
+        meters[(size_t) b].outputDb.store (m.outputDb);
+        meters[(size_t) b].gainDb.store (m.gainDb);
+        meters[(size_t) b].autoGainDb.store (compressors[(size_t) b].getAutoGainDb());
+    }
+}
+
+//==============================================================================
+int OttAudioProcessor::getNumPrograms()
+{
+    return (int) getFactoryPresets().size();
+}
+
+const juce::String OttAudioProcessor::getProgramName (int index)
+{
+    const auto& presets = getFactoryPresets();
+    return juce::isPositiveAndBelow (index, (int) presets.size()) ? juce::String (presets[(size_t) index].name) : juce::String();
+}
+
+void OttAudioProcessor::setCurrentProgram (int index)
+{
+    const auto& presets = getFactoryPresets();
+    if (! juce::isPositiveAndBelow (index, (int) presets.size()))
+        return;
+
+    currentProgram.store (index);
+
+    // Everything back to the OTT defaults (but keep bypass and the display mode), then apply the preset.
+    for (auto* p : getParameters())
+    {
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (p))
+        {
+            const auto& id = ranged->getParameterID();
+            if (id == ParamIDs::bypass || id == ParamIDs::displayMode)
+                continue;
+            ranged->setValueNotifyingHost (ranged->getDefaultValue());
+        }
+    }
+
+    for (const auto& [id, value] : presets[(size_t) index].values)
+        if (auto* p = apvts.getParameter (id))
+            p->setValueNotifyingHost (p->convertTo0to1 (value));
+}
+
+//==============================================================================
+void OttAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    auto state = apvts.copyState();
+    state.setProperty ("program", currentProgram.load(), nullptr);
+    state.setProperty ("uiScale", editorScale.load(), nullptr);
+
+    if (auto xml = state.createXml())
+        copyXmlToBinary (*xml, destData);
+}
+
+void OttAudioProcessor::setStateInformation (const void* data, int sizeInBytes)
+{
+    if (auto xml = getXmlFromBinary (data, sizeInBytes))
+    {
+        if (xml->hasTagName (apvts.state.getType()))
+        {
+            auto state = juce::ValueTree::fromXml (*xml);
+            currentProgram.store (juce::jlimit (0, getNumPrograms() - 1, (int) state.getProperty ("program", 0)));
+            editorScale.store (juce::jlimit (0.5f, 2.0f, (float) state.getProperty ("uiScale", 1.0f)));
+            apvts.replaceState (state);
+        }
+    }
+}
+
+//==============================================================================
+juce::AudioProcessorEditor* OttAudioProcessor::createEditor()
+{
+    return new OttAudioProcessorEditor (*this);
+}
+
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+{
+    return new OttAudioProcessor();
+}
