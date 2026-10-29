@@ -431,6 +431,7 @@ void OttAudioProcessor::setCurrentProgram (int index)
         return;
 
     currentProgram.store (index);
+    isRandomised.store (false);
 
     // Everything back to the OTT defaults (but keep bypass, linear phase and the link), then apply the preset.
     for (auto* p : getParameters())
@@ -448,6 +449,64 @@ void OttAudioProcessor::setCurrentProgram (int index)
     for (const auto& [id, value] : presets[(size_t) index].values)
         if (auto* p = apvts.getParameter (id))
             p->setValueNotifyingHost (p->convertTo0to1 (value));
+}
+
+//==============================================================================
+void OttAudioProcessor::randomise()
+{
+    juce::Random rng;
+    auto uniform = [&] (float lo, float hi) { return lo + (hi - lo) * rng.nextFloat(); };
+    auto logUniform = [&] (float lo, float hi) { return lo * std::pow (hi / lo, rng.nextFloat()); };
+    auto chance = [&] (float p) { return rng.nextFloat() < p ? 1.0f : 0.0f; };
+
+    auto set = [this] (const juce::String& id, float value)
+    {
+        if (auto* p = apvts.getParameter (id))
+        {
+            p->beginChangeGesture();
+            p->setValueNotifyingHost (p->convertTo0to1 (value));
+            p->endChangeGesture();
+        }
+    };
+
+    // Global
+    set (ParamIDs::mix,      uniform (30.0f, 100.0f));
+    set (ParamIDs::time,     logUniform (25.0f, 400.0f));
+    set (ParamIDs::upward,   uniform (0.0f, 100.0f));
+    set (ParamIDs::downward, uniform (0.0f, 100.0f));
+    set (ParamIDs::softKnee, chance (0.5f));
+    set (ParamIDs::rms,      chance (0.5f));
+
+    // In / Out: with LINK on the output follows the input, as it would when turning the knob.
+    const float in = uniform (-6.0f, 12.0f);
+    set (ParamIDs::inGain, in);
+    set (ParamIDs::output, paramOn (ParamIDs::inOutLink) ? -in : uniform (-6.0f, 6.0f));
+
+    // Crossover
+    set (ParamIDs::highOn,   chance (0.9f));
+    set (ParamIDs::lowOn,    chance (0.9f));
+    set (ParamIDs::lowFreq,  logUniform (50.0f, 300.0f));
+    set (ParamIDs::highFreq, logUniform (1000.0f, 8000.0f));
+    set (ParamIDs::slope,    (float) rng.nextInt (4));
+
+    // Bands
+    for (int b = 0; b < NumBands; ++b)
+    {
+        const float above = uniform (-50.0f, -10.0f);
+        set (bandParam (b, BandIDs::input),       uniform (0.0f, 10.0f));
+        set (bandParam (b, BandIDs::output),      uniform (-6.0f, 12.0f));
+        set (bandParam (b, BandIDs::threshold),   uniform (-20.0f, 10.0f));
+        set (bandParam (b, BandIDs::aboveThresh), above);
+        set (bandParam (b, BandIDs::belowThresh), above - uniform (0.0f, 20.0f));
+        set (bandParam (b, BandIDs::aboveRatio),  logUniform (1.5f, kRatioMax));
+        set (bandParam (b, BandIDs::belowRatio),  logUniform (1.5f, 20.0f));
+        set (bandParam (b, BandIDs::attack),      logUniform (0.5f, 100.0f));
+        set (bandParam (b, BandIDs::release),     logUniform (20.0f, 1000.0f));
+        set (bandParam (b, BandIDs::autoRelease), chance (0.3f));
+        set (bandParam (b, BandIDs::autoGain),    chance (0.5f));
+    }
+
+    isRandomised.store (true);
 }
 
 //==============================================================================

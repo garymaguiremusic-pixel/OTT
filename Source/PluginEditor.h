@@ -58,7 +58,7 @@ private:
 
     // Top strip / bottom bar
     juce::ComboBox presetBox, sizeBox;
-    juce::TextButton bypassButton { "Bypass" };
+    juce::TextButton bypassButton { "Bypass" }, randomButton { "Random" };
     HelpButton helpButton;
     HelpOverlay helpOverlay;
 
@@ -86,6 +86,7 @@ private:
 
     juce::String statusText;
     int lastShownProgram = -1;
+    bool shownRandom = false;
     double lastTimerMs = 0.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (OttAudioProcessorEditor)

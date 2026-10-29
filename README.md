@@ -18,7 +18,7 @@ The main view follows the layout of Xfer's OTT. The detailed settings are on the
 | **Bands** | One row per band (H / M / L), with **S** (solo) and **A** (band auto gain) buttons beside each bar. The number and knob are the band's output gain (default 10.3 / 5.7 / 10.3 dB). The bar runs from -80 dB (left) to 0 dB (right): the blue area is below the threshold (raised upward), the brown area is above it (pushed down). Drag an edge to move a threshold, and drag up/down inside an area to set its ratio. The strip through the middle shows the input level (grey), what the compressor does to it (orange = pushed down, light blue = lifted up) and where it ends up (white tick); the corner number is the gain change |
 | **Upward / Downward** | Scale each direction (as on Xfer OTT); at 0 % that side is hidden from the bars. **Linear Phase** on = no phase shift (~43 ms latency), off = zero latency. **Soft Knee**, **RMS** (off = peak detection), **Advanced** |
 | **Advanced** | Three sections (High / Mid / Low): split frequency with High / Low on/off, power (off = band passes untouched), **S** (solo), **Threshold** (-40 to +24 dB, moves both edges of the band's bar together, double-click = 0), **Attack**, **Release** with **Auto** release (short peaks recover fast, sustained compression slowly). **Crossover Slope**: 6 / 12 / 18 / 24 dB/oct (default 12) |
-| **Bars** | **Bypass**, 10 factory presets, **Size** (75-200 %), help |
+| **Bars** | **Random**, **Bypass**, factory presets, **Size** (75-200 %), help |
 
 ![advanced page](docs/advanced.png)
 
@@ -47,6 +47,12 @@ knob still trims on top, and the corner of the band's bar shows the make-up ("A 
 
 When **Upward** or **Downward** is at 0 %, that side (its coloured area and orange edge) disappears
 from the band bars.
+
+**Random** sets every sound-shaping control to a random value within a musically useful range
+(e.g. thresholds -50 to -10 dB, band outputs -6 to +12 dB, the below threshold always under the above
+one), so most results are usable starting points. Bypass, Solo, Linear Phase, LINK and Auto Gain are
+left alone, and with LINK on, Out Gain follows In Gain. The preset menu shows "Random" until you pick
+a preset.
 
 ### Mouse
 

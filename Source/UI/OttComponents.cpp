@@ -656,6 +656,7 @@ void HelpOverlay::paint (Graphics& g)
         "LINK: turning IN GAIN up turns OUT GAIN down by the same amount (keeps the level matched).",
         "AUTO GAIN: keeps the output as loud (K-weighted, like LUFS) as what comes into the plugin.",
         "S = solo a band.  A = band auto gain: keeps that band's level when you change its compression.",
+        "RANDOM: new random settings (Bypass, Solo, Linear Phase, LINK and Auto Gain stay as they are).",
         "BANDS: drag a region's edge to set its threshold, drag inside it (or wheel) to set its ratio.",
         "Left (blue) = below threshold, raised upward.  Right (brown) = above threshold, pushed down.",
         "The knob and number on each row are the band's output gain.",

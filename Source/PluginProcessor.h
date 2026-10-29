@@ -41,6 +41,11 @@ public:
     void changeProgramName (int, const juce::String&) override {}
 
     //==============================================================================
+    /** Message thread: random values for the sound-shaping parameters, within musically useful
+        ranges. Bypass, solo, linear phase, the In/Out link and global Auto Gain are left alone. */
+    void randomise();
+    std::atomic<bool> isRandomised { false };   // the preset menu shows "Random" until a preset is chosen
+
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 

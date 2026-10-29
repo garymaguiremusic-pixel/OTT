@@ -61,12 +61,18 @@ OttAudioProcessorEditor::OttAudioProcessorEditor (OttAudioProcessor& proc)
     presetBox.setTooltip ("Factory presets");
     presetBox.onChange = [this]
     {
+        // onChange only fires for the user's own choice, so re-picking the same preset reloads it
         const int index = presetBox.getSelectedId() - 1;
-        if (index >= 0 && index != processor.getCurrentProgram())
+        if (index >= 0)
             processor.setCurrentProgram (index);
         lastShownProgram = index;
+        shownRandom = false;
     };
     content.addAndMakeVisible (presetBox);
+
+    randomButton.setTooltip ("Randomise every sound setting (Bypass, Solo, Linear Phase, LINK and Auto Gain stay as they are)");
+    randomButton.onClick = [this] { processor.randomise(); };
+    content.addAndMakeVisible (randomButton);
     setupToggle (bypassButton, ott::ParamIDs::bypass, "Bypass (keeps the latency, so nothing shifts in time)", content);
 
     // Main knobs -----------------------------------------------------------------------
@@ -304,6 +310,7 @@ void OttAudioProcessorEditor::resized()
 void OttAudioProcessorEditor::layoutContent()
 {
     // top strip
+    randomButton.setBounds (232, 8, 62, 19);
     bypassButton.setBounds (300, 8, 60, 19);
     presetBox.setBounds (368, 7, 144, 21);
 
@@ -377,10 +384,18 @@ void OttAudioProcessorEditor::timerCallback()
         display.updateMeters (dt);
 
     const int program = processor.getCurrentProgram();
-    if (program != lastShownProgram)
+    const bool random = processor.isRandomised.load();
+    if (random && ! shownRandom)
+    {
+        presetBox.setSelectedId (0, dontSendNotification);
+        presetBox.setText ("Random", dontSendNotification);
+        shownRandom = true;
+    }
+    else if (! random && (program != lastShownProgram || shownRandom))
     {
         presetBox.setSelectedId (program + 1, dontSendNotification);
         lastShownProgram = program;
+        shownRandom = false;
     }
 
     // Controls of a switched-off outer band are dimmed.
