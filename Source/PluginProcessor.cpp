@@ -46,6 +46,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout OttAudioProcessor::createPar
     boolParam (ParamIDs::highOn, "High Band On", true);
     floatParam (ParamIDs::highFreq, "High Split", logRange (500.0f, 16000.0f, 2500.0f), kDefaultHighFreq,
                 [] (float v) { return formatHz (v); }, parseHz);
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamIDs::slope, 1 }, "Crossover Slope",
+                                                        StringArray { "6 dB/oct", "12 dB/oct", "18 dB/oct" }, 1));
     boolParam (ParamIDs::lowOn, "Low Band On", true);
     floatParam (ParamIDs::lowFreq, "Low Split", logRange (20.0f, 1000.0f, 120.0f), kDefaultLowFreq,
                 [] (float v) { return formatHz (v); }, parseHz);
@@ -102,6 +104,11 @@ bool OttAudioProcessor::paramOn (const juce::String& id) const
     return param (id) >= 0.5f;
 }
 
+int OttAudioProcessor::slopeOrder() const
+{
+    return juce::jlimit (1, 3, juce::roundToInt (param (ParamIDs::slope)) + 1);
+}
+
 juce::AudioProcessorParameter* OttAudioProcessor::getBypassParameter() const
 {
     return apvts.getParameter (ParamIDs::bypass);
@@ -124,10 +131,11 @@ void OttAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     crossover.prepare (sampleRate, maxBlock, numCh,
                        param (ParamIDs::lowFreq), paramOn (ParamIDs::lowOn),
-                       param (ParamIDs::highFreq), paramOn (ParamIDs::highOn));
+                       param (ParamIDs::highFreq), paramOn (ParamIDs::highOn), slopeOrder());
     minPhaseCrossover.prepare (sampleRate, maxBlock, numCh);
 
     linearActive = paramOn (ParamIDs::linearPhase);
+    activeSlope = slopeOrder();
     updateLatency (linearActive);
     modeFade.reset (sampleRate, 0.01);
     modeFade.setCurrentAndTargetValue (1.0f);
@@ -174,7 +182,7 @@ void OttAudioProcessor::timerCallback()
 {
     // Filter design runs here, on the message thread; the audio thread just picks it up.
     crossover.updateSettings (param (ParamIDs::lowFreq), paramOn (ParamIDs::lowOn),
-                              param (ParamIDs::highFreq), paramOn (ParamIDs::highOn));
+                              param (ParamIDs::highFreq), paramOn (ParamIDs::highOn), slopeOrder());
 
     // Linear phase on/off changes the latency; tell the host from the message thread.
     if (currentSampleRate > 0.0 && paramOn (ParamIDs::linearPhase) != reportedLinear)
@@ -237,9 +245,12 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
     outputGain.setTargetValue (juce::Decibels::decibelsToGain (param (ParamIDs::output)));
     inputGain.setTargetValue (juce::Decibels::decibelsToGain (param (ParamIDs::inGain)));
 
-    // Switching linear phase on/off: fade out, swap crossovers, fade back in.
+    // Switching linear phase on/off (or the zero-latency slope): fade out, swap, fade back in.
+    // In linear phase the slope changes through the crossover's own filter crossfade.
     const bool wantLinear = paramOn (ParamIDs::linearPhase);
-    if (wantLinear != linearActive && ! modeFade.isSmoothing())
+    const int wantSlope = slopeOrder();
+    const bool needSwitch = wantLinear != linearActive || (! wantLinear && wantSlope != activeSlope);
+    if (needSwitch && ! modeFade.isSmoothing())
     {
         if (modeFade.getTargetValue() > 0.5f)
         {
@@ -248,6 +259,7 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         else
         {
             linearActive = wantLinear;
+            activeSlope = wantSlope;
             if (linearActive) crossover.reset();
             else              minPhaseCrossover.reset();
             for (auto& c : compressors)
@@ -255,7 +267,7 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             modeFade.setTargetValue (1.0f);
         }
     }
-    else if (wantLinear == linearActive && ! modeFade.isSmoothing() && modeFade.getTargetValue() < 0.5f)
+    else if (! needSwitch && ! modeFade.isSmoothing() && modeFade.getTargetValue() < 0.5f)
     {
         modeFade.setTargetValue (1.0f);
     }
@@ -274,7 +286,7 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         else
             minPhaseCrossover.process (inputChunk, n, bands[BandLow], bands[BandMid], bands[BandHigh], dryDelayed,
                                        param (ParamIDs::lowFreq), paramOn (ParamIDs::lowOn),
-                                       param (ParamIDs::highFreq), paramOn (ParamIDs::highOn));
+                                       param (ParamIDs::highFreq), paramOn (ParamIDs::highOn), activeSlope);
 
         for (int b = 0; b < NumBands; ++b)
             compressors[(size_t) b].process (bands[(size_t) b].getArrayOfWritePointers(), numCh, n);

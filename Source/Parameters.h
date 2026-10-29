@@ -39,6 +39,7 @@ namespace ParamIDs
     inline constexpr auto highFreq = "highFreq";
     inline constexpr auto lowOn    = "lowOn";
     inline constexpr auto lowFreq  = "lowFreq";
+    inline constexpr auto slope    = "slope";      // 0, 1, 2 = 6, 12, 18 dB/oct
 }
 
 /** Per-band parameter ID, e.g. bandParam (BandHigh, "input") -> "h_input". */

@@ -176,6 +176,22 @@ OttAudioProcessorEditor::OttAudioProcessorEditor (OttAudioProcessor& proc)
         thresholdFields[i]->resetValue = 0.0f;
     }
 
+    const char* slopeNames[] = { "6 dB/oct", "12 dB/oct", "18 dB/oct" };
+    for (int i = 0; i < 3; ++i)
+    {
+        auto& button = slopeButtons[(size_t) i];
+        button.setButtonText (slopeNames[i]);
+        button.setTooltip ("Crossover slope for both split points. Gentler slopes ring less; 12 dB/oct is the default");
+        button.onClick = [this, i]
+        {
+            auto& param = p (ott::ParamIDs::slope);
+            param.beginChangeGesture();
+            param.setValueNotifyingHost (param.convertTo0to1 ((float) i));
+            param.endChangeGesture();
+        };
+        advanced.addAndMakeVisible (button);
+    }
+
     backButton.setTooltip ("Back to the main view");
     backButton.onClick = [this] { showAdvanced (false); };
     advanced.addAndMakeVisible (backButton);
@@ -323,6 +339,8 @@ void OttAudioProcessorEditor::layoutContent()
     highFreqField->setBounds (82, kAdvRowY[ott::BandHigh] + 3, 106, 24);
     lowFreqField->setBounds (82, kAdvRowY[ott::BandLow] + 3, 106, 24);
 
+    for (int i = 0; i < 3; ++i)
+        slopeButtons[(size_t) i].setBounds (kAdvCol[i], 392, kAdvColW, 28);
     backButton.setBounds (kAdvCol[2], 512, kAdvColW, 28);
 }
 
@@ -357,6 +375,10 @@ void OttAudioProcessorEditor::timerCallback()
     }
     highFreqField->setEnabled (highOn);
     lowFreqField->setEnabled (lowOn);
+
+    const int slope = juce::roundToInt (processor.apvts.getRawParameterValue (ott::ParamIDs::slope)->load());
+    for (int i = 0; i < 3; ++i)
+        slopeButtons[(size_t) i].setToggleState (i == slope, dontSendNotification);
 
     if (advanced.isVisible())
         advanced.repaint (82, kAdvRowY[ott::BandMid] + 3, 106, 24);   // mid range text
@@ -554,10 +576,12 @@ void OttAudioProcessorEditor::paintAdvanced (Graphics& g)
 
     drawSeparator (g, (float) kAdvRowY[ott::NumBands - 1] + 104.0f, advPanel.getX() + 8.0f, advPanel.getRight() - 8.0f);
 
+    CustomLookAndFeel::drawSmallLabel (g, "Crossover Slope", { 16.0f, 376.0f, 300.0f, 12.0f }, Justification::centredLeft);
+
     // a short note in the empty space
     g.setFont (CustomLookAndFeel::uiFont (11.0f));
     g.setColour (Theme::labelText.withAlpha (0.8f));
     g.drawFittedText ("THRESHOLD moves both edges of the band's bar together.\n"
                       "Drag an edge on the main view to move just that one.",
-                      Rectangle<int> (16, 368, 488, 40), Justification::centredLeft, 2);
+                      Rectangle<int> (16, 436, 488, 40), Justification::centredLeft, 2);
 }

@@ -20,12 +20,11 @@ namespace
         return sum;
     }
 
-    // ~80 dB stop band.
-    constexpr double kKaiserBeta = 8.0;
+    // Window for truncating the impulse responses.
+    constexpr double kKaiserBeta = 5.0;
 
     // The filter is ~85 ms long at every sample rate (4097 taps at 48 kHz), giving
-    // ~43 ms latency and a transition band of roughly 60 Hz, steep enough for an
-    // 88 Hz split.
+    // ~43 ms latency: long enough for a 6 dB/oct split at 20 Hz.
     int firLengthFor (double sampleRate)
     {
         const int half = juce::roundToInt (2048.0 * sampleRate / 48000.0);
@@ -35,30 +34,42 @@ namespace
 
 LinearPhaseCrossover::LinearPhaseCrossover() = default;
 
-void LinearPhaseCrossover::designLowPass (float* dest, int length, double cutoffHz, double fs, double beta)
+void LinearPhaseCrossover::designLowPass (float* dest, int length, double cutoffHz, double fs, int order)
 {
     const int centre = (length - 1) / 2;
-    const double fc = juce::jlimit (1.0, 0.49 * fs, cutoffHz) / fs;    // cycles per sample
-    const double i0Beta = besselI0 (beta);
+    const double fc = juce::jlimit (1.0, 0.49 * fs, cutoffHz);
 
-    double sum = 0.0;
-    for (int n = 0; n < length; ++n)
+    // Frequency sampling: the zero-phase response on a dense grid, inverse FFT,
+    // then a window to fit it into `length` taps.
+    int fftOrder = 1;
+    while ((1 << fftOrder) < 4 * length)
+        ++fftOrder;
+    const int n = 1 << fftOrder;
+
+    std::vector<float> data ((size_t) n * 2, 0.0f);
+    for (int k = 0; k <= n / 2; ++k)
     {
-        const int m = n - centre;
-        const double sinc = (m == 0) ? 2.0 * fc
-                                     : std::sin (juce::MathConstants<double>::twoPi * fc * (double) m)
-                                         / (juce::MathConstants<double>::pi * (double) m);
+        const double f = (double) k * fs / (double) n;
+        data[(size_t) (2 * k)] = (float) (1.0 / (1.0 + std::pow (f / fc, (double) order)));
+    }
+    juce::dsp::FFT (fftOrder).performRealOnlyInverseTransform (data.data());
+
+    const double i0Beta = besselI0 (kKaiserBeta);
+    double sum = 0.0;
+    for (int i = 0; i < length; ++i)
+    {
+        const int m = i - centre;
         const double r = (double) m / (double) centre;
-        const double window = besselI0 (beta * std::sqrt (std::max (0.0, 1.0 - r * r))) / i0Beta;
-        const double h = sinc * window;
-        dest[n] = (float) h;
+        const double window = besselI0 (kKaiserBeta * std::sqrt (std::max (0.0, 1.0 - r * r))) / i0Beta;
+        const double h = (double) data[(size_t) ((m + n) % n)] * window;
+        dest[i] = (float) h;
         sum += h;
     }
 
     // Exact unity gain at DC.
     if (std::abs (sum) > 1.0e-12)
-        for (int n = 0; n < length; ++n)
-            dest[n] = (float) ((double) dest[n] / sum);
+        for (int i = 0; i < length; ++i)
+            dest[i] = (float) ((double) dest[i] / sum);
 }
 
 void LinearPhaseCrossover::designFilters (const Settings& s, juce::AudioBuffer<float>& lp1,
@@ -71,7 +82,7 @@ void LinearPhaseCrossover::designFilters (const Settings& s, juce::AudioBuffer<f
 
     // High split: LP2. When the high band is off, LP2 is a pure delay so "high" is silent.
     if (s.highOn)
-        designLowPass (lp2.getWritePointer (0), firLength, s.highHz, sampleRate, kKaiserBeta);
+        designLowPass (lp2.getWritePointer (0), firLength, s.highHz, sampleRate, s.order);
     else
         lp2.setSample (0, centreTap, 1.0f);
 
@@ -80,12 +91,12 @@ void LinearPhaseCrossover::designFilters (const Settings& s, juce::AudioBuffer<f
     if (s.lowOn)
     {
         const double lowHz = s.highOn ? std::min (s.lowHz, s.highHz) : s.lowHz;
-        designLowPass (lp1.getWritePointer (0), firLength, lowHz, sampleRate, kKaiserBeta);
+        designLowPass (lp1.getWritePointer (0), firLength, lowHz, sampleRate, s.order);
     }
 }
 
 void LinearPhaseCrossover::prepare (double fs, int maxBlockSize, int numChannels,
-                                    float lowHz, bool lowOn, float highHz, bool highOn)
+                                    float lowHz, bool lowOn, float highHz, bool highOn, int slopeOrder)
 {
     sampleRate = fs;
     maxBlock = std::max (1, maxBlockSize);
@@ -93,7 +104,7 @@ void LinearPhaseCrossover::prepare (double fs, int maxBlockSize, int numChannels
     firLength = firLengthFor (fs);
     centreTap = (firLength - 1) / 2;
 
-    currentSettings = { lowHz, highHz, lowOn, highOn };
+    currentSettings = { lowHz, highHz, lowOn, highOn, juce::jlimit (1, 3, slopeOrder) };
 
     juce::AudioBuffer<float> lp1, lp2;
     designFilters (currentSettings, lp1, lp2);
@@ -127,12 +138,12 @@ void LinearPhaseCrossover::reset()
     delayWritePos = 0;
 }
 
-void LinearPhaseCrossover::updateSettings (float lowHz, bool lowOn, float highHz, bool highOn)
+void LinearPhaseCrossover::updateSettings (float lowHz, bool lowOn, float highHz, bool highOn, int slopeOrder)
 {
     if (! prepared)
         return;
 
-    const Settings s { lowHz, highHz, lowOn, highOn };
+    const Settings s { lowHz, highHz, lowOn, highOn, juce::jlimit (1, 3, slopeOrder) };
     if (s == currentSettings)
         return;
 

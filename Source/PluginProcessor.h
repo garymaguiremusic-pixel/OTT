@@ -65,10 +65,12 @@ private:
     void updateLatency (bool linear);
     float param (const juce::String& id) const;
     bool paramOn (const juce::String& id) const;
+    int slopeOrder() const;   // 1, 2, 3 = 6, 12, 18 dB/oct
 
     ott::LinearPhaseCrossover crossover;
     ott::MinPhaseCrossover minPhaseCrossover;
     bool linearActive = true;                 // audio thread: which crossover is running
+    int activeSlope = 2;                      // audio thread: zero-latency crossover slope (1..3)
     std::atomic<bool> reportedLinear { true }; // latency currently reported to the host
     juce::SmoothedValue<float> modeFade { 1.0f };
     std::array<ott::BandCompressor, ott::NumBands> compressors;

@@ -17,7 +17,7 @@ The main view follows the layout of Xfer's OTT. The detailed settings are on the
 | **Top** | **Depth** (dry/wet), **Time** (scales every attack/release), **In Gain**, **Out Gain**. **LINK** (on by default): turning In Gain up turns Out Gain down by the same amount |
 | **Bands** | One row per band (H / M / L). The number and knob are the band's output gain (default 10.3 / 5.7 / 10.3 dB). The bar runs from -80 dB (left) to 0 dB (right): the blue area is below the threshold (raised upward), the brown area is above it (pushed down). Drag an edge to move a threshold, and drag up/down inside an area to set its ratio. The white line is the input level, the orange marker shows where the compressor moves it, and the top-left number is the gain change |
 | **Upward / Downward** | Scale each direction (as on Xfer OTT); at 0 % that side is hidden from the bars. **Linear Phase** on = no phase shift (~43 ms latency), off = zero latency. **Soft Knee**, **RMS** (off = peak detection), **Advanced** |
-| **Advanced** | Three sections (High / Mid / Low): split frequency with High / Low on/off, power (off = band passes untouched), **S** (solo), **Threshold** (moves both edges of the band's bar together, double-click = 0), **Attack**, **Release** |
+| **Advanced** | Three sections (High / Mid / Low): split frequency with High / Low on/off, power (off = band passes untouched), **S** (solo), **Threshold** (moves both edges of the band's bar together, double-click = 0), **Attack**, **Release**. **Crossover Slope**: 6 / 12 / 18 dB/oct (default 12) |
 | **Bars** | **Bypass**, 10 factory presets, **Size** (75-200 %), help |
 
 ![advanced page](docs/advanced.png)
@@ -46,13 +46,17 @@ from the band bars.
 
 ## Linear-phase crossover
 
-**Linear Phase** is on by default. Turn it off for a zero-latency crossover (4th-order Linkwitz-Riley
-filters with a matching all-pass), which has phase shift around the split points. Switching fades out,
+**Linear Phase** is on by default. Turn it off for a zero-latency crossover, which has phase shift
+around the split points: a 1st-order pair (6 dB/oct), 2nd-order Linkwitz-Riley (12 dB/oct) or 3rd-order
+Butterworth (18 dB/oct), with a matching all-pass so the bands still sum flat. Switching fades out,
 swaps the crossovers and fades back in, and the host is told about the new latency.
 
 With Linear Phase on:
 
-Two Kaiser-windowed FIR low-passes (LP1 at the low split, LP2 at the high split) run as FFT convolutions:
+Two zero-phase FIR low-passes (LP1 at the low split, LP2 at the high split) run as FFT convolutions.
+Each has the response 1 / (1 + (f / fc)^k), with k = 1, 2 or 3 for 6, 12 or 18 dB/oct, so the high side
+(1 - LP) has the same slope and both sides are -6 dB at the split. Gentle slopes keep the filters short in
+time, which avoids the pre-ringing that steep linear-phase filters cause on transients.
 
 ```
 low  = LP1(x)

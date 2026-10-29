@@ -21,6 +21,11 @@ namespace ott
     the split frequencies are. Every band is delayed by the same amount, which is
     reported to the host as latency.
 
+    Each low-pass has the zero-phase magnitude 1 / (1 + (f / fc)^k), k = 1, 2, 3
+    for 6, 12 or 18 dB/oct. The complementary high side, 1 - L, then has exactly
+    the same slope, and both sides are -6 dB at the split. Gentle slopes also keep
+    the filters short in time, so there is very little pre-ringing.
+
     A disabled split is handled in the filter itself: Low off makes LP1 silent
     (the mid band reaches down to DC), High off makes LP2 a pure delay (the mid
     band reaches up to Nyquist). New filters are designed on the message thread
@@ -34,14 +39,14 @@ public:
 
     /** Call from prepareToPlay(). Designs the filters synchronously. */
     void prepare (double sampleRate, int maxBlockSize, int numChannels,
-                  float lowHz, bool lowOn, float highHz, bool highOn);
+                  float lowHz, bool lowOn, float highHz, bool highOn, int slopeOrder);
     void reset();
 
     /** Latency in samples (the FIR centre tap). */
     int getLatency() const noexcept     { return centreTap; }
 
     /** Message thread: redesigns the filters if the settings changed. Cheap otherwise. */
-    void updateSettings (float lowHz, bool lowOn, float highHz, bool highOn);
+    void updateSettings (float lowHz, bool lowOn, float highHz, bool highOn, int slopeOrder);
 
     /** Audio thread. Splits `input` into the three band buffers and the delayed dry signal.
         All buffers must hold at least `numSamples` samples and the same channel count. */
@@ -49,18 +54,20 @@ public:
                   juce::AudioBuffer<float>& low, juce::AudioBuffer<float>& mid,
                   juce::AudioBuffer<float>& high, juce::AudioBuffer<float>& dryDelayed);
 
-    /** Builds a Kaiser-windowed sinc low-pass, normalised to unity gain at DC. Public for testing. */
-    static void designLowPass (float* dest, int length, double cutoffHz, double sampleRate, double kaiserBeta);
+    /** Builds a zero-phase low-pass with magnitude 1 / (1 + (f / fc)^order), centred in
+        `length` taps and normalised to unity gain at DC. Public for testing. */
+    static void designLowPass (float* dest, int length, double cutoffHz, double sampleRate, int order);
 
 private:
     struct Settings
     {
         float lowHz = 88.3f, highHz = 2500.0f;
         bool lowOn = true, highOn = true;
+        int order = 2;
         bool operator== (const Settings& o) const noexcept
         {
             return juce::exactlyEqual (lowHz, o.lowHz) && juce::exactlyEqual (highHz, o.highHz)
-                && lowOn == o.lowOn && highOn == o.highOn;
+                && lowOn == o.lowOn && highOn == o.highOn && order == o.order;
         }
     };
 
