@@ -141,7 +141,7 @@ private:
     enum class Target { None, AboveHandle, BelowHandle, AboveRegion, BelowRegion };
     struct Hit { int band = -1; Target target = Target::None; };
 
-    Hit hitTest (juce::Point<float>) const;
+    Hit findHit (juce::Point<float>) const;
     juce::RangedAudioParameter* paramFor (const Hit&) const;
     float xForDb (float db, const juce::Rectangle<float>& lane) const;
     float dbForX (float x, const juce::Rectangle<float>& lane) const;

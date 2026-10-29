@@ -313,7 +313,7 @@ float DynamicsDisplay::dbForX (float x, const Rectangle<float>& lane) const
     return ott::kMinDb + (x - lane.getX()) / lane.getWidth() * -ott::kMinDb;
 }
 
-DynamicsDisplay::Hit DynamicsDisplay::hitTest (Point<float> p) const
+DynamicsDisplay::Hit DynamicsDisplay::findHit (Point<float> p) const
 {
     for (int band = 0; band < 3; ++band)
     {
@@ -401,7 +401,7 @@ String DynamicsDisplay::getTooltip()
 
 void DynamicsDisplay::mouseMove (const MouseEvent& e)
 {
-    const auto h = hitTest (e.position);
+    const auto h = findHit (e.position);
     if (h.band != hover.band || h.target != hover.target)
     {
         hover = h;
@@ -421,7 +421,7 @@ void DynamicsDisplay::mouseExit (const MouseEvent&)
 
 void DynamicsDisplay::mouseDown (const MouseEvent& e)
 {
-    active = hitTest (e.position);
+    active = findHit (e.position);
     if (auto* p = paramFor (active))
     {
         dragStartValue = p->convertFrom0to1 (p->getValue());
@@ -462,7 +462,7 @@ void DynamicsDisplay::mouseUp (const MouseEvent&)
 
 void DynamicsDisplay::mouseDoubleClick (const MouseEvent& e)
 {
-    if (auto* p = paramFor (hitTest (e.position)))
+    if (auto* p = paramFor (findHit (e.position)))
     {
         p->beginChangeGesture();
         setParam (*p, p->convertFrom0to1 (p->getDefaultValue()));
@@ -473,7 +473,7 @@ void DynamicsDisplay::mouseDoubleClick (const MouseEvent& e)
 
 void DynamicsDisplay::mouseWheelMove (const MouseEvent& e, const MouseWheelDetails& wheel)
 {
-    const auto h = hitTest (e.position);
+    const auto h = findHit (e.position);
     auto* p = paramFor (h);
     if (p == nullptr)
         return;
