@@ -304,14 +304,21 @@ bool DynamicsDisplay::bandEnabled (int band) const
     return true;
 }
 
+// A side of the display is only shown (and editable) while its knob is above 0 %.
 bool DynamicsDisplay::showAbove() const
 {
-    return true;
+    return processor.apvts.getRawParameterValue (ott::ParamIDs::downward)->load() > 0.05f;
 }
 
 bool DynamicsDisplay::showBelow() const
 {
-    return true;
+    return processor.apvts.getRawParameterValue (ott::ParamIDs::upward)->load() > 0.05f;
+}
+
+float DynamicsDisplay::thresholdDb (int band, const char* id) const
+{
+    // The band's Threshold control shifts both thresholds together.
+    return get (band, id) + get (band, ott::BandIDs::threshold);
 }
 
 float DynamicsDisplay::xForDb (float db, const Rectangle<float>& lane) const
@@ -332,8 +339,8 @@ DynamicsDisplay::Hit DynamicsDisplay::findHit (Point<float> p) const
         if (! lane.expanded (4.0f, 0.0f).contains (p) || ! bandEnabled (band))
             continue;
 
-        const float ax = xForDb (get (band, ott::BandIDs::aboveThresh), lane);
-        const float bx = xForDb (get (band, ott::BandIDs::belowThresh), lane);
+        const float ax = xForDb (thresholdDb (band, ott::BandIDs::aboveThresh), lane);
+        const float bx = xForDb (thresholdDb (band, ott::BandIDs::belowThresh), lane);
         const float da = showAbove() ? std::abs (p.x - ax) : 1.0e9f;
         const float db = showBelow() ? std::abs (p.x - bx) : 1.0e9f;
 
@@ -391,8 +398,8 @@ String DynamicsDisplay::describe (const Hit& h) const
     const String band = String (ott::bandName (h.band)).toUpperCase();
     switch (h.target)
     {
-        case Target::AboveHandle: return band + "   ABOVE THRESHOLD   " + ott::formatDb (get (h.band, ott::BandIDs::aboveThresh), 1);
-        case Target::BelowHandle: return band + "   BELOW THRESHOLD   " + ott::formatDb (get (h.band, ott::BandIDs::belowThresh), 1);
+        case Target::AboveHandle: return band + "   ABOVE THRESHOLD   " + ott::formatDb (thresholdDb (h.band, ott::BandIDs::aboveThresh), 1);
+        case Target::BelowHandle: return band + "   BELOW THRESHOLD   " + ott::formatDb (thresholdDb (h.band, ott::BandIDs::belowThresh), 1);
         case Target::AboveRegion: return band + "   ABOVE RATIO (DOWNWARD)   " + ott::formatRatio (get (h.band, ott::BandIDs::aboveRatio)) + " : 1";
         case Target::BelowRegion: return band + "   BELOW RATIO (UPWARD)   1 : " + ott::formatRatio (get (h.band, ott::BandIDs::belowRatio));
         case Target::None:        break;
@@ -510,7 +517,6 @@ void DynamicsDisplay::updateMeters (float dt)
         s.in  = in  > s.in  ? in  : std::max (in,  s.in  - fall);
         s.out = out > s.out ? out : std::max (out, s.out - fall);
         s.gain += (m.gainDb.load() - s.gain) * 0.5f;
-        s.autoGain = m.autoGainDb.load();
     }
     repaint();
 }
@@ -549,8 +555,9 @@ void DynamicsDisplay::paintLane (Graphics& g, int band, Rectangle<float> lane)
         return;
     }
 
-    const float ax = xForDb (get (band, ott::BandIDs::aboveThresh), lane);
-    const float bx = xForDb (get (band, ott::BandIDs::belowThresh), lane);
+    const bool above = showAbove(), below = showBelow();
+    const float ax = above ? xForDb (thresholdDb (band, ott::BandIDs::aboveThresh), lane) : lane.getRight();
+    const float bx = below ? xForDb (thresholdDb (band, ott::BandIDs::belowThresh), lane) : lane.getX();
 
     // Upward region (left of the below threshold) and downward region (right of the above threshold),
     // with the untouched gap between them, as on Xfer's OTT.
@@ -571,13 +578,13 @@ void DynamicsDisplay::paintLane (Graphics& g, int band, Rectangle<float> lane)
 
     // ratios
     g.setFont (CustomLookAndFeel::uiFont (10.0f, true));
-    if (belowRect.getWidth() > 44.0f)
+    if (below && belowRect.getWidth() > 44.0f)
     {
         g.setColour (Colour (0xff8fc7ff).withAlpha (0.75f));
         g.drawText ("1:" + ott::formatRatio (get (band, ott::BandIDs::belowRatio)),
                     belowRect.reduced (5.0f, 3.0f), Justification::bottomLeft);
     }
-    if (aboveRect.getWidth() > 44.0f)
+    if (above && aboveRect.getWidth() > 44.0f)
     {
         g.setColour (Colour (0xffffc9a0).withAlpha (0.75f));
         g.drawText (ott::formatRatio (get (band, ott::BandIDs::aboveRatio)) + ":1",
@@ -617,15 +624,13 @@ void DynamicsDisplay::paintLane (Graphics& g, int band, Rectangle<float> lane)
         g.setColour (colour.withAlpha (isHover ? 1.0f : 0.8f));
         g.fillRect (x - 0.75f, lane.getY(), 1.5f, lane.getHeight());
     };
-    drawHandle (bx, hover.band == band && hover.target == Target::BelowHandle);
-    drawHandle (ax, hover.band == band && hover.target == Target::AboveHandle);
+    if (below) drawHandle (bx, hover.band == band && hover.target == Target::BelowHandle);
+    if (above) drawHandle (ax, hover.band == band && hover.target == Target::AboveHandle);
 
     // gain change readout, top left
     g.setFont (CustomLookAndFeel::uiFont (11.0f, true));
     g.setColour (Colours::white.withAlpha (0.85f));
-    String text = (m.gain >= 0.05f ? "+" : "") + String (m.gain, 1) + " dB";
-    if (get (band, ott::BandIDs::autoGain) >= 0.5f)
-        text << "   AUTO " << (m.autoGain >= 0.0f ? "+" : "") << String (m.autoGain, 1);
+    const String text = (m.gain >= 0.05f ? "+" : "") + String (m.gain, 1) + " dB";
     g.drawText (text, lane.reduced (5.0f, 3.0f), Justification::topLeft);
 }
 
@@ -658,12 +663,13 @@ void HelpOverlay::paint (Graphics& g)
     {
         "Three-band upward + downward compressor (OTT style).",
         "DEPTH = dry/wet.  TIME scales every attack and release.  IN GAIN drives all bands.",
-        "LINK: turning IN GAIN up turns OUT GAIN down by the same amount (and the other way).",
+        "LINK: turning IN GAIN up turns OUT GAIN down by the same amount (keeps the level matched).",
         "BANDS: drag a region's edge to set its threshold, drag inside it (or wheel) to set its ratio.",
         "Left (blue) = below threshold, raised upward.  Right (brown) = above threshold, pushed down.",
         "The knob and number on each row are the band's output gain.",
-        "UPWARD / DOWNWARD scale each direction.  LINEAR PHASE: on = no phase shift (43 ms latency),",
-        "off = zero latency.  ADVANCED: split points, band input, attack/release, solo, auto gain.",
+        "UPWARD / DOWNWARD scale each direction (at 0 that side disappears from the bars).",
+        "LINEAR PHASE: on = no phase shift (43 ms latency), off = zero latency.",
+        "ADVANCED: split frequencies, and Threshold / Attack / Release for each band.",
         "Knobs: drag (shift = fine), wheel = 1.0 steps, shift + wheel = 0.1, double-click = reset",
         "(gain knobs reset to 0 dB), right-click = type a value.  Drag the corner or use SIZE to resize.",
         "",

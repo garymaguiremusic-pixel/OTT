@@ -51,7 +51,7 @@ public:
     /** Meter values for the editor, written by the audio thread. */
     struct BandMeter
     {
-        std::atomic<float> inputDb { ott::kMinDb }, outputDb { ott::kMinDb }, gainDb { 0.0f }, autoGainDb { 0.0f };
+        std::atomic<float> inputDb { ott::kMinDb }, outputDb { ott::kMinDb }, gainDb { 0.0f };
     };
     std::array<BandMeter, ott::NumBands> meters;
     std::atomic<float> latencyMs { 0.0f };

@@ -27,7 +27,6 @@ namespace ParamIDs
     inline constexpr auto inOutLink   = "inOutLink";
     inline constexpr auto linearPhase = "linearPhase";
     inline constexpr auto time        = "time";
-    inline constexpr auto amount      = "amount";
     inline constexpr auto upward      = "upward";
     inline constexpr auto downward    = "downward";
     inline constexpr auto mix         = "mix";
@@ -55,7 +54,7 @@ namespace BandIDs
     inline constexpr auto output      = "output";
     inline constexpr auto active      = "active";
     inline constexpr auto solo        = "solo";
-    inline constexpr auto autoGain    = "autoGain";
+    inline constexpr auto threshold   = "threshold";   // offset applied to both thresholds
     inline constexpr auto attack      = "attack";
     inline constexpr auto release     = "release";
     inline constexpr auto aboveThresh = "aboveThresh";

@@ -73,13 +73,10 @@ private:
 
     // Advanced page
     juce::TextButton highOnButton { "High" }, lowOnButton { "Low" }, backButton { "Back" };
-    std::unique_ptr<ValueField> highFreqField, lowFreqField, amountField;
+    std::unique_ptr<ValueField> highFreqField, lowFreqField;
     std::array<PowerButton, ott::NumBands> powerButtons;
-    std::array<juce::TextButton, ott::NumBands> soloButtons, autoGainButtons;
-    std::array<std::unique_ptr<OttKnob>, ott::NumBands> inputKnobs;
-    std::array<std::unique_ptr<ValueField>, ott::NumBands> attackFields, releaseFields,
-                                                          aboveThreshFields, aboveRatioFields,
-                                                          belowThreshFields, belowRatioFields;
+    std::array<juce::TextButton, ott::NumBands> soloButtons;
+    std::array<std::unique_ptr<ValueField>, ott::NumBands> thresholdFields, attackFields, releaseFields;
 
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::vector<std::unique_ptr<ButtonAttachment>> buttonAttachments;

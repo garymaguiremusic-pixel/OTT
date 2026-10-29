@@ -14,11 +14,8 @@ namespace ott
       - Above threshold / ratio: downward compression (ratio "inf" = limiting).
       - Below threshold / ratio: upward compression (quiet signals are raised
         towards the threshold, capped at +36 dB).
-      - Amount, Upward and Downward scale the gain change in dB.
+      - Upward and Downward scale the gain change in dB.
       - Time scales attack and release.
-      - Auto gain matches the band's long-term loudness after compression to its
-        loudness before the band's input gain, so drive changes the sound but
-        not the level.
 */
 class BandCompressor
 {
@@ -29,8 +26,8 @@ public:
         float attackMs = 10.0f, releaseMs = 100.0f;
         float aboveThresh = -30.0f, aboveRatio = 4.0f;
         float belowThresh = -40.0f, belowRatio = 4.0f;
-        float amount = 1.0f, upward = 1.0f, downward = 1.0f, timeScale = 1.0f;
-        bool active = true, autoGain = false, softKnee = true, rms = true;
+        float upward = 1.0f, downward = 1.0f, timeScale = 1.0f;
+        bool active = true, softKnee = true, rms = true;
     };
 
     struct Meter
@@ -47,7 +44,6 @@ public:
         outGain.reset (fs, 0.02);
         activeMix.reset (fs, 0.03);
         rmsAlpha = 1.0f - coefFor (10.0f);
-        agAlpha = 1.0f - coefFor (500.0f);
         reset();
     }
 
@@ -55,8 +51,6 @@ public:
     {
         envMs = 0.0f;
         gainDb = 0.0f;
-        msIn = msOut = 0.0f;
-        autoGainDb = 0.0f;
         inGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (settings.inputDb));
         outGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (settings.outputDb));
         activeMix.setCurrentAndTargetValue (settings.active ? 1.0f : 0.0f);
@@ -100,7 +94,7 @@ public:
             up = upSlope * under;
 
         up = std::min (up, kMaxBoostDb);
-        return settings.amount * (settings.downward * down + settings.upward * up);
+        return settings.downward * down + settings.upward * up;
     }
 
     /** Processes one band in place. `numChannels` is 1 or 2. */
@@ -111,28 +105,10 @@ public:
         const float chanNorm = numChannels > 1 ? 0.5f : 1.0f;
 
         float maxLevelDb = kMinDb, maxOut = 0.0f;
-        const float agStart = juce::Decibels::decibelsToGain (autoGainDb);
-
-        // Auto gain target from the previous block's loudness estimates.
-        float agTarget = 0.0f;
-        if (settings.autoGain)
-        {
-            if (msIn > 1.0e-7f && msOut > 1.0e-10f)
-                agTarget = juce::jlimit (-24.0f, 24.0f, 10.0f * std::log10 (msIn / msOut));
-            else
-                agTarget = autoGainDb;   // hold through silence
-        }
-        // Glide towards the target (~200 ms), linearly across the block.
-        const float agBlockCoef = std::exp (-(float) numSamples / (0.2f * (float) sampleRate));
-        autoGainDb = agTarget + (autoGainDb - agTarget) * agBlockCoef;
-        const float agEnd = juce::Decibels::decibelsToGain (autoGainDb);
-        const float agStep = (agEnd - agStart) / (float) std::max (1, numSamples);
-        float ag = agStart;
 
         for (int i = 0; i < numSamples; ++i)
         {
             const float xl = l[i], xr = r[i];
-            msIn += agAlpha * ((xl * xl + xr * xr) * chanNorm - msIn);
 
             const float gIn = inGain.getNextValue();
             const float yl = xl * gIn, yr = xr * gIn;
@@ -157,10 +133,8 @@ public:
 
             const float g = juce::Decibels::decibelsToGain (gainDb, -200.0f);
             float zl = yl * g, zr = yr * g;
-            msOut += agAlpha * ((zl * zl + zr * zr) * chanNorm - msOut);
 
-            const float post = ag * outGain.getNextValue();
-            ag += agStep;
+            const float post = outGain.getNextValue();
             zl *= post;
             zr *= post;
 
@@ -175,8 +149,6 @@ public:
 
         // denormal guard
         if (envMs < 1.0e-20f) envMs = 0.0f;
-        if (msIn  < 1.0e-20f) msIn = 0.0f;
-        if (msOut < 1.0e-20f) msOut = 0.0f;
 
         meter.inputDb = std::max (kMinDb, maxLevelDb);
         meter.outputDb = std::max (kMinDb, juce::Decibels::gainToDecibels (maxOut, -100.0f));
@@ -184,7 +156,6 @@ public:
     }
 
     const Meter& getMeter() const noexcept     { return meter; }
-    float getAutoGainDb() const noexcept       { return settings.autoGain ? autoGainDb : 0.0f; }
 
 private:
     float coefFor (float ms) const
@@ -202,8 +173,6 @@ private:
     float envMs = 0.0f, gainDb = 0.0f;
     float attackCoef = 0.0f, releaseCoef = 0.0f, rmsAlpha = 0.0f;
     float knee = 10.0f, downSlope = 0.0f, upSlope = 0.0f;
-
-    float msIn = 0.0f, msOut = 0.0f, agAlpha = 0.0f, autoGainDb = 0.0f;
 };
 
 } // namespace ott

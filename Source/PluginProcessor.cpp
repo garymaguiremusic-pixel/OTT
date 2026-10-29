@@ -34,7 +34,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout OttAudioProcessor::createPar
     boolParam (ParamIDs::inOutLink, "In/Out Link", true);
     boolParam (ParamIDs::linearPhase, "Linear Phase", true);
     floatParam (ParamIDs::time,     "Time",     logRange (20.0f, 500.0f, 100.0f), 100.0f, percent);
-    floatParam (ParamIDs::amount,   "Amount",   { 0.0f, 100.0f }, 100.0f, percent);
     floatParam (ParamIDs::upward,   "Upward",   { 0.0f, 100.0f }, 100.0f, percent);
     floatParam (ParamIDs::downward, "Downward", { 0.0f, 100.0f }, 100.0f, percent);
     floatParam (ParamIDs::mix,      "Depth",      { 0.0f, 100.0f }, 100.0f, percent);
@@ -61,7 +60,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout OttAudioProcessor::createPar
         floatParam (bandParam (b, BandIDs::output), n + " Output", { -24.0f, 24.0f }, d.output, db);
         boolParam  (bandParam (b, BandIDs::active),   n + " Active", true);
         boolParam  (bandParam (b, BandIDs::solo),     n + " Solo", false);
-        boolParam  (bandParam (b, BandIDs::autoGain), n + " Auto Gain", false);
+        floatParam (bandParam (b, BandIDs::threshold), n + " Threshold", { -24.0f, 24.0f }, 0.0f,
+                    [] (float v) { return (v > 0.0f ? "+" : "") + formatDb (v, 1); });
         floatParam (bandParam (b, BandIDs::attack),  n + " Attack",  logRange (0.1f, 1000.0f, 20.0f), d.attack,
                     [] (float v) { return formatMs (v); });
         floatParam (bandParam (b, BandIDs::release), n + " Release", logRange (1.0f, 5000.0f, 250.0f), d.release,
@@ -183,7 +183,6 @@ void OttAudioProcessor::timerCallback()
 
 void OttAudioProcessor::updateBandSettings()
 {
-    const float amount   = param (ParamIDs::amount) * 0.01f;
     const float upward   = param (ParamIDs::upward) * 0.01f;
     const float downward = param (ParamIDs::downward) * 0.01f;
     const float time     = param (ParamIDs::time) * 0.01f;
@@ -197,13 +196,12 @@ void OttAudioProcessor::updateBandSettings()
         s.outputDb    = param (bandParam (b, BandIDs::output));
         s.attackMs    = param (bandParam (b, BandIDs::attack));
         s.releaseMs   = param (bandParam (b, BandIDs::release));
-        s.aboveThresh = param (bandParam (b, BandIDs::aboveThresh));
+        const float offset = param (bandParam (b, BandIDs::threshold));
+        s.aboveThresh = param (bandParam (b, BandIDs::aboveThresh)) + offset;
         s.aboveRatio  = param (bandParam (b, BandIDs::aboveRatio));
-        s.belowThresh = param (bandParam (b, BandIDs::belowThresh));
+        s.belowThresh = param (bandParam (b, BandIDs::belowThresh)) + offset;
         s.belowRatio  = param (bandParam (b, BandIDs::belowRatio));
         s.active      = paramOn (bandParam (b, BandIDs::active));
-        s.autoGain    = paramOn (bandParam (b, BandIDs::autoGain));
-        s.amount = amount;
         s.upward = upward;
         s.downward = downward;
         s.timeScale = time;
@@ -309,7 +307,6 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         meters[(size_t) b].inputDb.store (m.inputDb);
         meters[(size_t) b].outputDb.store (m.outputDb);
         meters[(size_t) b].gainDb.store (m.gainDb);
-        meters[(size_t) b].autoGainDb.store (compressors[(size_t) b].getAutoGainDb());
     }
 }
 

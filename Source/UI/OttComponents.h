@@ -118,8 +118,8 @@ public:
       - the below-threshold (upward) and above-threshold (downward) regions,
         with draggable threshold handles; drag up/down inside a region (or use
         the wheel) to set its ratio
-      - the gain change in dB (and the auto-gain offset when enabled)
-    T / B / A selects which thresholds are shown and editable.
+      - the gain change in dB
+    The below / above side is hidden while the Upward / Downward knob is at 0.
 */
 class DynamicsDisplay : public juce::Component,
                         public juce::TooltipClient
@@ -155,6 +155,7 @@ private:
     bool showBelow() const;
     bool bandEnabled (int band) const;
     float get (int band, const char* id) const;
+    float thresholdDb (int band, const char* id) const;   // threshold incl. the band's offset
     void setParam (juce::RangedAudioParameter&, float value);   // clamps thresholds against each other
     juce::String describe (const Hit&) const;
     void paintLane (juce::Graphics&, int band, juce::Rectangle<float> lane);
@@ -163,7 +164,7 @@ private:
     std::array<juce::Rectangle<float>, 3> lanes;
     juce::Rectangle<float> scaleArea;
 
-    struct MeterState { float in = -80.0f, out = -80.0f, gain = 0.0f, autoGain = 0.0f; };
+    struct MeterState { float in = -80.0f, out = -80.0f, gain = 0.0f; };
     std::array<MeterState, 3> meterState;
 
     Hit active, hover;

@@ -20,10 +20,9 @@ namespace
     // Advanced page (coordinates inside the page, which starts below the top strip)
     constexpr int kAdvTop = kTopStripH;
     const Rectangle<float> advPanel { 8.0f, 6.0f, 504.0f, 554.0f };
-    constexpr int kAdvRowY[ott::NumBands] = { 30, 182, 334 };
-    constexpr int kAdvGlobalY = 486;
-    constexpr int kAdvCol[3] = { 104, 238, 372 };
-    constexpr int kAdvColW = 128;
+    constexpr int kAdvRowY[ott::NumBands] = { 34, 144, 254 };
+    constexpr int kAdvCol[3] = { 16, 182, 348 };
+    constexpr int kAdvColW = 156;
 
     const float kScales[] = { 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f };
 
@@ -147,9 +146,8 @@ OttAudioProcessorEditor::OttAudioProcessorEditor (OttAudioProcessor& proc)
     setupToggle (lowOnButton,  ott::ParamIDs::lowOn,  "Low band on/off. Off = the mid band reaches all the way down", advanced);
     highFreqField = std::make_unique<ValueField> (p (ott::ParamIDs::highFreq), ValueField::Style::Lcd);
     lowFreqField  = std::make_unique<ValueField> (p (ott::ParamIDs::lowFreq),  ValueField::Style::Lcd);
-    amountField   = std::make_unique<ValueField> (p (ott::ParamIDs::amount),   ValueField::Style::Lcd);
     highFreqField->formatter = lowFreqField->formatter = [] (float v) { return ott::formatHz (v); };
-    for (auto* f : { highFreqField.get(), lowFreqField.get(), amountField.get() })
+    for (auto* f : { highFreqField.get(), lowFreqField.get() })
     {
         f->onStatus = status;
         advanced.addAndMakeVisible (*f);
@@ -163,12 +161,6 @@ OttAudioProcessorEditor::OttAudioProcessorEditor (OttAudioProcessor& proc)
                      name + " band on. Off passes the band through untouched", advanced);
         soloButtons[i].setButtonText ("S");
         setupToggle (soloButtons[i], ott::bandParam (b, ott::BandIDs::solo), "Solo the " + name.toLowerCase() + " band", advanced);
-        autoGainButtons[i].setButtonText ("Auto Gain");
-        setupToggle (autoGainButtons[i], ott::bandParam (b, ott::BandIDs::autoGain),
-                     "Auto gain: keeps the " + name.toLowerCase() + " band as loud after compression as it was "
-                     "before its Input gain. The band's output knob still trims on top", advanced);
-
-        makeKnob (inputKnobs[i], ott::bandParam (b, ott::BandIDs::input).toRawUTF8(), "Input", true, advanced);
 
         auto field = [&] (std::unique_ptr<ValueField>& f, const char* id, std::function<String (float)> fmt)
         {
@@ -178,12 +170,10 @@ OttAudioProcessorEditor::OttAudioProcessorEditor (OttAudioProcessor& proc)
             advanced.addAndMakeVisible (*f);
         };
         auto ms = [] (float v) { return ott::formatMs (v); };
-        field (attackFields[i],      ott::BandIDs::attack,      ms);
-        field (releaseFields[i],     ott::BandIDs::release,     ms);
-        field (aboveThreshFields[i], ott::BandIDs::aboveThresh, [] (float v) { return ott::formatDb (v, 1); });
-        field (belowThreshFields[i], ott::BandIDs::belowThresh, [] (float v) { return ott::formatDb (v, 1); });
-        field (aboveRatioFields[i],  ott::BandIDs::aboveRatio,  [] (float v) { return ott::formatRatio (v) + " : 1"; });
-        field (belowRatioFields[i],  ott::BandIDs::belowRatio,  [] (float v) { return "1 : " + ott::formatRatio (v); });
+        field (thresholdFields[i], ott::BandIDs::threshold, [] (float v) { return (v > 0.0f ? "+" : "") + ott::formatDb (v, 1); });
+        field (attackFields[i],    ott::BandIDs::attack,    ms);
+        field (releaseFields[i],   ott::BandIDs::release,   ms);
+        thresholdFields[i]->resetValue = 0.0f;
     }
 
     backButton.setTooltip ("Back to the main view");
@@ -323,23 +313,17 @@ void OttAudioProcessorEditor::layoutContent()
         const int r = kAdvRowY[b];
         powerButtons[i].setBounds (196, r + 4, 28, 22);
         soloButtons[i].setBounds (228, r + 4, 30, 22);
-        autoGainButtons[i].setBounds (372, r + 4, 128, 22);
 
-        inputKnobs[i]->setBounds (16, r + 34, 76, 104);
-        attackFields[i]->setBounds      (kAdvCol[0], r + 50, kAdvColW, 24);
-        aboveThreshFields[i]->setBounds (kAdvCol[1], r + 50, kAdvColW, 24);
-        aboveRatioFields[i]->setBounds  (kAdvCol[2], r + 50, kAdvColW, 24);
-        releaseFields[i]->setBounds     (kAdvCol[0], r + 104, kAdvColW, 24);
-        belowThreshFields[i]->setBounds (kAdvCol[1], r + 104, kAdvColW, 24);
-        belowRatioFields[i]->setBounds  (kAdvCol[2], r + 104, kAdvColW, 24);
+        thresholdFields[i]->setBounds (kAdvCol[0], r + 60, kAdvColW, 28);
+        attackFields[i]->setBounds    (kAdvCol[1], r + 60, kAdvColW, 28);
+        releaseFields[i]->setBounds   (kAdvCol[2], r + 60, kAdvColW, 28);
     }
     highOnButton.setBounds (16, kAdvRowY[ott::BandHigh] + 4, 60, 22);
     lowOnButton.setBounds (16, kAdvRowY[ott::BandLow] + 4, 60, 22);
     highFreqField->setBounds (82, kAdvRowY[ott::BandHigh] + 3, 106, 24);
     lowFreqField->setBounds (82, kAdvRowY[ott::BandLow] + 3, 106, 24);
 
-    amountField->setBounds (kAdvCol[0], kAdvGlobalY + 32, kAdvColW, 24);
-    backButton.setBounds (kAdvCol[2], kAdvGlobalY + 30, kAdvColW, 28);
+    backButton.setBounds (kAdvCol[2], 512, kAdvColW, 28);
 }
 
 //==============================================================================
@@ -366,10 +350,8 @@ void OttAudioProcessorEditor::timerCallback()
         const size_t i = (size_t) b;
         const bool on = b == ott::BandHigh ? highOn : (b == ott::BandLow ? lowOn : true);
         for (Component* c : { (Component*) bandGainFields[i].get(), (Component*) bandGainKnobs[i].get(),
-                              (Component*) inputKnobs[i].get(), (Component*) attackFields[i].get(), (Component*) releaseFields[i].get(),
-                              (Component*) aboveThreshFields[i].get(), (Component*) aboveRatioFields[i].get(),
-                              (Component*) belowThreshFields[i].get(), (Component*) belowRatioFields[i].get(),
-                              (Component*) &powerButtons[i], (Component*) &soloButtons[i], (Component*) &autoGainButtons[i] })
+                              (Component*) thresholdFields[i].get(), (Component*) attackFields[i].get(), (Component*) releaseFields[i].get(),
+                              (Component*) &powerButtons[i], (Component*) &soloButtons[i] })
             if (c->isEnabled() != on)
                 c->setEnabled (on);
     }
@@ -539,8 +521,7 @@ void OttAudioProcessorEditor::paintAdvanced (Graphics& g)
     g.fillAll();
     CustomLookAndFeel::drawPanel (g, advPanel, "Advanced");
 
-    const char* rowA[] = { "Attack", "Above Threshold", "Above Ratio" };
-    const char* rowB[] = { "Release", "Below Threshold", "Below Ratio" };
+    const char* labels[] = { "Threshold", "Attack", "Release" };
 
     for (int b = 0; b < ott::NumBands; ++b)
     {
@@ -549,10 +530,8 @@ void OttAudioProcessorEditor::paintAdvanced (Graphics& g)
             drawSeparator (g, r - 6.0f, advPanel.getX() + 8.0f, advPanel.getRight() - 8.0f);
 
         for (int c = 0; c < 3; ++c)
-        {
-            CustomLookAndFeel::drawSmallLabel (g, rowA[c], { (float) kAdvCol[c], r + 36.0f, (float) kAdvColW, 12.0f }, Justification::centredLeft);
-            CustomLookAndFeel::drawSmallLabel (g, rowB[c], { (float) kAdvCol[c], r + 90.0f, (float) kAdvColW, 12.0f }, Justification::centredLeft);
-        }
+            CustomLookAndFeel::drawSmallLabel (g, labels[c], { (float) kAdvCol[c], r + 44.0f, (float) kAdvColW, 12.0f },
+                                               Justification::centredLeft);
     }
 
     // Mid row: label and its frequency range
@@ -573,9 +552,12 @@ void OttAudioProcessorEditor::paintAdvanced (Graphics& g)
         g.drawFittedText (from + " - " + to, rangeArea.toNearestInt(), Justification::centred, 1, 0.8f);
     }
 
-    // global row
-    drawSeparator (g, (float) kAdvGlobalY - 6.0f, advPanel.getX() + 8.0f, advPanel.getRight() - 8.0f);
-    CustomLookAndFeel::drawSmallLabel (g, "Amount", { (float) kAdvCol[0], (float) kAdvGlobalY + 18.0f, (float) kAdvColW, 12.0f },
-                                       Justification::centredLeft);
-    CustomLookAndFeel::drawSmallLabel (g, "Global", { 16.0f, (float) kAdvGlobalY + 32.0f, 76.0f, 24.0f }, Justification::centredLeft);
+    drawSeparator (g, (float) kAdvRowY[ott::NumBands - 1] + 104.0f, advPanel.getX() + 8.0f, advPanel.getRight() - 8.0f);
+
+    // a short note in the empty space
+    g.setFont (CustomLookAndFeel::uiFont (11.0f));
+    g.setColour (Theme::labelText.withAlpha (0.8f));
+    g.drawFittedText ("THRESHOLD moves both edges of the band's bar together.\n"
+                      "Drag an edge on the main view to move just that one.",
+                      Rectangle<int> (16, 368, 488, 40), Justification::centredLeft, 2);
 }
