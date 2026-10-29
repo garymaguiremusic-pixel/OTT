@@ -48,7 +48,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OttAudioProcessor::createPar
     floatParam (ParamIDs::highFreq, "High Split", logRange (500.0f, 16000.0f, 2500.0f), kDefaultHighFreq,
                 [] (float v) { return formatHz (v); }, parseHz);
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { ParamIDs::slope, 1 }, "Crossover Slope",
-                                                        StringArray { "6 dB/oct", "12 dB/oct", "18 dB/oct" }, 1));
+                                                        StringArray { "6 dB/oct", "12 dB/oct", "18 dB/oct", "24 dB/oct" }, 1));
     boolParam (ParamIDs::lowOn, "Low Band On", true);
     floatParam (ParamIDs::lowFreq, "Low Split", logRange (20.0f, 1000.0f, 120.0f), kDefaultLowFreq,
                 [] (float v) { return formatHz (v); }, parseHz);
@@ -63,12 +63,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout OttAudioProcessor::createPar
         floatParam (bandParam (b, BandIDs::output), n + " Output", { -24.0f, 24.0f }, d.output, db);
         boolParam  (bandParam (b, BandIDs::active),   n + " Active", true);
         boolParam  (bandParam (b, BandIDs::solo),     n + " Solo", false);
-        floatParam (bandParam (b, BandIDs::threshold), n + " Threshold", { -24.0f, 24.0f }, 0.0f,
+        floatParam (bandParam (b, BandIDs::threshold), n + " Threshold", { -40.0f, 24.0f }, 0.0f,
                     [] (float v) { return (v > 0.0f ? "+" : "") + formatDb (v, 1); });
         floatParam (bandParam (b, BandIDs::attack),  n + " Attack",  logRange (0.1f, 1000.0f, 20.0f), d.attack,
                     [] (float v) { return formatMs (v); });
         floatParam (bandParam (b, BandIDs::release), n + " Release", logRange (1.0f, 5000.0f, 250.0f), d.release,
                     [] (float v) { return formatMs (v); });
+        boolParam  (bandParam (b, BandIDs::autoRelease), n + " Auto Release", false);
         floatParam (bandParam (b, BandIDs::aboveThresh), n + " Above Threshold", { kMinDb, 0.0f }, d.aboveThresh, db);
         floatParam (bandParam (b, BandIDs::aboveRatio),  n + " Above Ratio", logRange (1.0f, kRatioMax, 10.0f), d.aboveRatio,
                     [] (float v) { return formatRatio (v) + " : 1"; }, parseRatio);
@@ -107,7 +108,7 @@ bool OttAudioProcessor::paramOn (const juce::String& id) const
 
 int OttAudioProcessor::slopeOrder() const
 {
-    return juce::jlimit (1, 3, juce::roundToInt (param (ParamIDs::slope)) + 1);
+    return juce::jlimit (1, 4, juce::roundToInt (param (ParamIDs::slope)) + 1);
 }
 
 juce::AudioProcessorParameter* OttAudioProcessor::getBypassParameter() const
@@ -168,8 +169,8 @@ void OttAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
                 k->highPass[(size_t) ch].reset();
             }
     }
-    loudnessAlpha = 1.0f - std::exp (-1.0f / (1.5f * (float) sampleRate));   // ~1.5 s integration
-    msRef = msOut = 0.0f;
+    loudnessBlockLength = std::max (1, juce::roundToInt (0.1 * sampleRate));   // 100 ms blocks, as in BS.1770
+    resetLoudness();
     autoGainDb = 0.0f;
 
     inputGain.reset (sampleRate, 0.02);
@@ -187,6 +188,37 @@ void OttAudioProcessor::releaseResources()
 {
     crossover.reset();
     minPhaseCrossover.reset();
+}
+
+void OttAudioProcessor::resetLoudness()
+{
+    loudnessRef.fill (0.0);
+    loudnessOut.fill (0.0);
+    loudnessBlocks = loudnessIndex = blockCount = 0;
+    blockRef = blockOut = 0.0;
+    autoGainTargetDb = autoGainDb;
+}
+
+void OttAudioProcessor::pushLoudnessBlock()
+{
+    loudnessRef[(size_t) loudnessIndex] = blockRef;
+    loudnessOut[(size_t) loudnessIndex] = blockOut;
+    loudnessIndex = (loudnessIndex + 1) % kLoudnessBlocks;
+    loudnessBlocks = std::min (loudnessBlocks + 1, kLoudnessBlocks);
+    blockRef = blockOut = 0.0;
+    blockCount = 0;
+
+    double ref = 0.0, out = 0.0;
+    for (int i = 0; i < kLoudnessBlocks; ++i)
+    {
+        ref += loudnessRef[(size_t) i];
+        out += loudnessOut[(size_t) i];
+    }
+
+    // Mean square over the window; hold the gain through silence (input below -60 dB).
+    const double samples = (double) loudnessBlocks * (double) loudnessBlockLength;
+    if (ref / samples > 1.0e-6 && out / samples > 1.0e-9)
+        autoGainTargetDb = juce::jlimit (-24.0f, 24.0f, (float) (10.0 * std::log10 (ref / out)));
 }
 
 void OttAudioProcessor::updateLatency (bool linear)
@@ -223,6 +255,7 @@ void OttAudioProcessor::updateBandSettings()
         s.outputDb    = param (bandParam (b, BandIDs::output));
         s.attackMs    = param (bandParam (b, BandIDs::attack));
         s.releaseMs   = param (bandParam (b, BandIDs::release));
+        s.autoRelease = paramOn (bandParam (b, BandIDs::autoRelease));
         const float offset = param (bandParam (b, BandIDs::threshold));
         s.aboveThresh = param (bandParam (b, BandIDs::aboveThresh)) + offset;
         s.aboveRatio  = param (bandParam (b, BandIDs::aboveRatio));
@@ -317,15 +350,15 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
         for (int b = 0; b < NumBands; ++b)
             compressors[(size_t) b].process (bands[(size_t) b].getArrayOfWritePointers(), numCh, n);
 
-        // Auto Gain: K-weighted loudness of the input vs. the processed output (measured on the
-        // previous chunk), gliding over ~300 ms, applied as a ramp across this chunk.
-        float agTarget = 0.0f;
-        if (paramOn (ParamIDs::autoGain))
-            agTarget = (msRef > 1.0e-6f && msOut > 1.0e-9f)      // hold through silence (< -60 dB)
-                         ? juce::jlimit (-24.0f, 24.0f, 10.0f * std::log10 (msRef / msOut))
-                         : autoGainDb;
+        // Auto Gain: K-weighted loudness of the input vs. the processed output over the last
+        // second (sliding window of 100 ms blocks), gliding over ~100 ms, ramped across this chunk.
+        const bool agOn = paramOn (ParamIDs::autoGain);
+        if (agOn && ! autoGainWasOn)
+            resetLoudness();                                      // start measuring afresh
+        autoGainWasOn = agOn;
+        const float agTarget = agOn ? autoGainTargetDb : 0.0f;
         const float agStart = juce::Decibels::decibelsToGain (autoGainDb);
-        autoGainDb = agTarget + (autoGainDb - agTarget) * std::exp (-(float) n / (0.3f * (float) currentSampleRate));
+        autoGainDb = agTarget + (autoGainDb - agTarget) * std::exp (-(float) n / (0.1f * (float) currentSampleRate));
         const float agStep = (juce::Decibels::decibelsToGain (autoGainDb) - agStart) / (float) n;
         float ag = agStart;
 
@@ -358,13 +391,13 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                 const float matched = processed * ag;
                 buffer.setSample (ch, start + i, fade * (matched + byp * (dry - matched)));
             }
-            msRef += loudnessAlpha * (refSq - msRef);
-            msOut += loudnessAlpha * (outSq - msOut);
+            blockRef += refSq;
+            blockOut += outSq;
+            if (++blockCount >= loudnessBlockLength)
+                pushLoudnessBlock();
         }
     }
 
-    if (msRef < 1.0e-20f) msRef = 0.0f;
-    if (msOut < 1.0e-20f) msOut = 0.0f;
     autoGainMeterDb.store (autoGainDb);
 
     for (int b = 0; b < NumBands; ++b)

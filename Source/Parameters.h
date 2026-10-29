@@ -40,7 +40,7 @@ namespace ParamIDs
     inline constexpr auto highFreq = "highFreq";
     inline constexpr auto lowOn    = "lowOn";
     inline constexpr auto lowFreq  = "lowFreq";
-    inline constexpr auto slope    = "slope";      // 0, 1, 2 = 6, 12, 18 dB/oct
+    inline constexpr auto slope    = "slope";      // 0..3 = 6, 12, 18, 24 dB/oct
 }
 
 /** Per-band parameter ID, e.g. bandParam (BandHigh, "input") -> "h_input". */
@@ -59,6 +59,7 @@ namespace BandIDs
     inline constexpr auto threshold   = "threshold";   // offset applied to both thresholds
     inline constexpr auto attack      = "attack";
     inline constexpr auto release     = "release";
+    inline constexpr auto autoRelease = "autoRelease";
     inline constexpr auto aboveThresh = "aboveThresh";
     inline constexpr auto aboveRatio  = "aboveRatio";
     inline constexpr auto belowThresh = "belowThresh";

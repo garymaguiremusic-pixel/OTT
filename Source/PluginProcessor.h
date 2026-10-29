@@ -66,12 +66,12 @@ private:
     void updateLatency (bool linear);
     float param (const juce::String& id) const;
     bool paramOn (const juce::String& id) const;
-    int slopeOrder() const;   // 1, 2, 3 = 6, 12, 18 dB/oct
+    int slopeOrder() const;   // 1..4 = 6, 12, 18, 24 dB/oct
 
     ott::LinearPhaseCrossover crossover;
     ott::MinPhaseCrossover minPhaseCrossover;
     bool linearActive = true;                 // audio thread: which crossover is running
-    int activeSlope = 2;                      // audio thread: zero-latency crossover slope (1..3)
+    int activeSlope = 2;                      // audio thread: zero-latency crossover slope (1..4)
     std::atomic<bool> reportedLinear { true }; // latency currently reported to the host
     juce::SmoothedValue<float> modeFade { 1.0f };
     std::array<ott::BandCompressor, ott::NumBands> compressors;
@@ -93,7 +93,14 @@ private:
         }
     };
     KWeighting refWeighting, outWeighting;
-    float msRef = 0.0f, msOut = 0.0f, loudnessAlpha = 0.0f, autoGainDb = 0.0f;
+    void resetLoudness();
+    void pushLoudnessBlock();
+    static constexpr int kLoudnessBlocks = 10;                 // 10 x 100 ms = 1 s window
+    std::array<double, kLoudnessBlocks> loudnessRef {}, loudnessOut {};
+    double blockRef = 0.0, blockOut = 0.0;
+    int loudnessBlockLength = 4800, loudnessBlocks = 0, loudnessIndex = 0, blockCount = 0;
+    float autoGainDb = 0.0f, autoGainTargetDb = 0.0f;
+    bool autoGainWasOn = false;
     std::vector<float> inGainBuffer;
 
     int maxBlock = 512;

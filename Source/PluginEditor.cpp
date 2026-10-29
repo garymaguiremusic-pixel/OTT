@@ -15,7 +15,7 @@ namespace
 
     constexpr int kBandRowY[ott::NumBands] = { 220, 296, 372 };   // High, Mid, Low
     constexpr int kBandRowH = 64;
-    const Rectangle<int> displayBounds { 76, 214, 340, 228 };
+    const Rectangle<int> displayBounds { 92, 214, 324, 228 };
 
     // Advanced page (coordinates inside the page, which starts below the top strip)
     constexpr int kAdvTop = kTopStripH;
@@ -111,6 +111,10 @@ OttAudioProcessorEditor::OttAudioProcessorEditor (OttAudioProcessor& proc)
             c->onStatus = status;
             content.addAndMakeVisible (*c);
         }
+
+        mainSoloButtons[(size_t) b].setButtonText ("S");
+        setupToggle (mainSoloButtons[(size_t) b], ott::bandParam (b, ott::BandIDs::solo),
+                     "Solo the " + String (ott::bandName (b)).toLowerCase() + " band", content);
     }
 
     display.onStatus = status;
@@ -121,7 +125,7 @@ OttAudioProcessorEditor::OttAudioProcessorEditor (OttAudioProcessor& proc)
     setupToggle (softKneeButton, ott::ParamIDs::softKnee, "Soft knee: rounds the corners of both thresholds", content);
     setupToggle (rmsButton, ott::ParamIDs::rms, "RMS detection (on) or peak detection (off)", content);
 
-    advancedButton.setTooltip ("Split points, band input, attack / release, thresholds, ratios, solo and auto gain");
+    advancedButton.setTooltip ("Split frequencies and slope, and Threshold / Attack / Release (with Auto release) for each band");
     advancedButton.onClick = [this] { showAdvanced (! advanced.isVisible()); };
     content.addAndMakeVisible (advancedButton);
 
@@ -178,14 +182,20 @@ OttAudioProcessorEditor::OttAudioProcessorEditor (OttAudioProcessor& proc)
         field (attackFields[i],    ott::BandIDs::attack,    ms);
         field (releaseFields[i],   ott::BandIDs::release,   ms);
         thresholdFields[i]->resetValue = 0.0f;
+
+        autoReleaseButtons[i].setButtonText ("Auto");
+        setupToggle (autoReleaseButtons[i], ott::bandParam (b, ott::BandIDs::autoRelease),
+                     "Auto release: short peaks recover fast, long stretches of compression recover slowly "
+                     "(less pumping). Replaces the Release time while on", advanced);
     }
 
-    const char* slopeNames[] = { "6 dB/oct", "12 dB/oct", "18 dB/oct" };
-    for (int i = 0; i < 3; ++i)
+    const char* slopeNames[] = { "6 dB/oct", "12 dB/oct", "18 dB/oct", "24 dB/oct" };
+    for (int i = 0; i < 4; ++i)
     {
         auto& button = slopeButtons[(size_t) i];
         button.setButtonText (slopeNames[i]);
-        button.setTooltip ("Crossover slope for both split points. Gentler slopes ring less; 12 dB/oct is the default");
+        button.setTooltip ("Crossover slope for both split points. Gentler = smoother, less ringing; "
+                           "steeper = the bands are more separate, so the H / M / L knobs act more strongly");
         button.onClick = [this, i]
         {
             auto& param = p (ott::ParamIDs::slope);
@@ -307,9 +317,10 @@ void OttAudioProcessorEditor::layoutContent()
     for (int b = 0; b < ott::NumBands; ++b)
     {
         const int r = kBandRowY[b];
-        bandGainFields[(size_t) b]->setBounds (16, r + 20, 56, 24);
+        bandGainFields[(size_t) b]->setBounds (12, r + 20, 46, 24);
+        mainSoloButtons[(size_t) b].setBounds (64, r + 21, 22, 22);
         bandGainKnobs[(size_t) b]->setBounds (420, r + 4, 56, 56);
-        lanes[(size_t) b] = { 8.0f, (float) (r - displayBounds.getY() + 8), 324.0f, (float) (kBandRowH - 16) };
+        lanes[(size_t) b] = { 8.0f, (float) (r - displayBounds.getY() + 8), 308.0f, (float) (kBandRowH - 16) };
     }
     display.setLaneBounds (lanes, {});
 
@@ -337,15 +348,16 @@ void OttAudioProcessorEditor::layoutContent()
 
         thresholdFields[i]->setBounds (kAdvCol[0], r + 60, kAdvColW, 28);
         attackFields[i]->setBounds    (kAdvCol[1], r + 60, kAdvColW, 28);
-        releaseFields[i]->setBounds   (kAdvCol[2], r + 60, kAdvColW, 28);
+        releaseFields[i]->setBounds   (kAdvCol[2], r + 60, kAdvColW - 56, 28);
+        autoReleaseButtons[i].setBounds (kAdvCol[2] + kAdvColW - 52, r + 60, 52, 28);
     }
     highOnButton.setBounds (16, kAdvRowY[ott::BandHigh] + 4, 60, 22);
     lowOnButton.setBounds (16, kAdvRowY[ott::BandLow] + 4, 60, 22);
     highFreqField->setBounds (82, kAdvRowY[ott::BandHigh] + 3, 106, 24);
     lowFreqField->setBounds (82, kAdvRowY[ott::BandLow] + 3, 106, 24);
 
-    for (int i = 0; i < 3; ++i)
-        slopeButtons[(size_t) i].setBounds (kAdvCol[i], 392, kAdvColW, 28);
+    for (int i = 0; i < 4; ++i)
+        slopeButtons[(size_t) i].setBounds (16 + i * 123, 392, 119, 28);
     backButton.setBounds (kAdvCol[2], 512, kAdvColW, 28);
 }
 
@@ -374,9 +386,15 @@ void OttAudioProcessorEditor::timerCallback()
         const bool on = b == ott::BandHigh ? highOn : (b == ott::BandLow ? lowOn : true);
         for (Component* c : { (Component*) bandGainFields[i].get(), (Component*) bandGainKnobs[i].get(),
                               (Component*) thresholdFields[i].get(), (Component*) attackFields[i].get(), (Component*) releaseFields[i].get(),
-                              (Component*) &powerButtons[i], (Component*) &soloButtons[i] })
+                              (Component*) &powerButtons[i], (Component*) &soloButtons[i],
+                              (Component*) &mainSoloButtons[i], (Component*) &autoReleaseButtons[i] })
             if (c->isEnabled() != on)
                 c->setEnabled (on);
+
+        // the Release time does nothing while Auto release is on
+        const bool releaseActive = on && ! isOn (ott::bandParam (b, ott::BandIDs::autoRelease).toRawUTF8());
+        if (releaseFields[i]->isEnabled() != releaseActive)
+            releaseFields[i]->setEnabled (releaseActive);
     }
     highFreqField->setEnabled (highOn);
     lowFreqField->setEnabled (lowOn);
@@ -384,7 +402,7 @@ void OttAudioProcessorEditor::timerCallback()
     autoGainButton.setButtonText (isOn (ott::ParamIDs::autoGain) ? "On" : "Off");
 
     const int slope = juce::roundToInt (processor.apvts.getRawParameterValue (ott::ParamIDs::slope)->load());
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 4; ++i)
         slopeButtons[(size_t) i].setToggleState (i == slope, dontSendNotification);
 
     if (advanced.isVisible())

@@ -13,6 +13,7 @@ namespace ott
       6 dB/oct:  1st-order low/high pair, high = x - low. Sums back to x exactly.
       12 dB/oct: 2nd-order Linkwitz-Riley (high side inverted). Sums to a 1st-order all-pass.
       18 dB/oct: 3rd-order Butterworth. Sums to a 2nd-order all-pass (Q = 1).
+      24 dB/oct: 4th-order Linkwitz-Riley. Sums to a 2nd-order all-pass (Q = 0.707).
 
     The input is split at the high frequency, the low part is split again at the
     low frequency, and the high band goes through the matching all-pass at the
@@ -38,13 +39,13 @@ public:
     }
 
     /** Splits `input` into the three band buffers; `dry` gets an undelayed copy.
-        `order` is 1, 2 or 3 (6, 12 or 18 dB/oct). */
+        `order` is 1..4 (6, 12, 18 or 24 dB/oct). */
     void process (const juce::AudioBuffer<float>& input, int numSamples,
                   juce::AudioBuffer<float>& low, juce::AudioBuffer<float>& mid,
                   juce::AudioBuffer<float>& high, juce::AudioBuffer<float>& dry,
                   float lowHz, bool lowOn, float highHz, bool highOn, int order)
     {
-        order = juce::jlimit (1, 3, order);
+        order = juce::jlimit (1, 4, order);
         const float nyquistLimit = (float) (fs * 0.45);
         highHz = juce::jlimit (20.0f, nyquistLimit, highHz);
         lowHz  = juce::jlimit (20.0f, nyquistLimit, highOn ? std::min (lowHz, highHz) : lowHz);
@@ -121,8 +122,8 @@ private:
     struct Split
     {
         OnePole pole;
-        Svf svfLow, svfHigh;
-        void reset() { pole.reset(); svfLow.reset(); svfHigh.reset(); }
+        Svf svfLow, svfHigh, svfLow2, svfHigh2;
+        void reset() { pole.reset(); svfLow.reset(); svfHigh.reset(); svfLow2.reset(); svfHigh2.reset(); }
 
         void process (int ch, float x, float g, int order, float& lo, float& hi) noexcept
         {
@@ -138,6 +139,16 @@ private:
                     lo = lp;
                     hi = -hp;
                     break;
+
+                case 4:   // Linkwitz-Riley 4th order = Butterworth 2nd order squared: lo + hi = all-pass
+                {
+                    float unused, l1, h1;
+                    svfLow.process (ch, x, g, kButterworth, l1, unused, unused);
+                    svfLow2.process (ch, l1, g, kButterworth, lo, unused, unused);
+                    svfHigh.process (ch, x, g, kButterworth, unused, unused, h1);
+                    svfHigh2.process (ch, h1, g, kButterworth, unused, unused, hi);
+                    break;
+                }
 
                 default:  // Butterworth 3rd order = 1st order x 2nd order (Q = 1): lo + hi = all-pass
                 {
@@ -159,6 +170,7 @@ private:
         {
             case 1:  return x;
             case 2:  compPole.process (ch, x, g, lp, hp); return lp - hp;
+            case 4:  compSvf.process (ch, x, g, kButterworth, lp, bp, hp); return x - 2.0f * kButterworth * bp;
             default: compSvf.process (ch, x, g, 1.0f, lp, bp, hp); return x - 2.0f * bp;
         }
     }
@@ -167,6 +179,8 @@ private:
     {
         return (float) std::tan (juce::MathConstants<double>::pi * (double) hz / fs);
     }
+
+    static constexpr float kButterworth = 1.41421356f;   // k = 1 / Q for Q = 0.707
 
     double fs = 48000.0;
     Split split2, split1;

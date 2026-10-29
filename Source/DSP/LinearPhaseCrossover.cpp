@@ -104,7 +104,7 @@ void LinearPhaseCrossover::prepare (double fs, int maxBlockSize, int numChannels
     firLength = firLengthFor (fs);
     centreTap = (firLength - 1) / 2;
 
-    currentSettings = { lowHz, highHz, lowOn, highOn, juce::jlimit (1, 3, slopeOrder) };
+    currentSettings = { lowHz, highHz, lowOn, highOn, juce::jlimit (1, 4, slopeOrder) };
 
     juce::AudioBuffer<float> lp1, lp2;
     designFilters (currentSettings, lp1, lp2);
@@ -143,7 +143,7 @@ void LinearPhaseCrossover::updateSettings (float lowHz, bool lowOn, float highHz
     if (! prepared)
         return;
 
-    const Settings s { lowHz, highHz, lowOn, highOn, juce::jlimit (1, 3, slopeOrder) };
+    const Settings s { lowHz, highHz, lowOn, highOn, juce::jlimit (1, 4, slopeOrder) };
     if (s == currentSettings)
         return;
 

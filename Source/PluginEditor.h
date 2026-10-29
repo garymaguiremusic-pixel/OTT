@@ -67,6 +67,7 @@ private:
     juce::TextButton linkButton { "LINK" }, autoGainButton { "Auto Gain" };
     std::array<std::unique_ptr<ValueField>, ott::NumBands> bandGainFields;
     std::array<std::unique_ptr<OttKnob>, ott::NumBands> bandGainKnobs;
+    std::array<juce::TextButton, ott::NumBands> mainSoloButtons;
     DynamicsDisplay display;
     juce::TextButton linearPhaseButton { "Linear Phase" }, softKneeButton { "Soft Knee" }, rmsButton { "RMS" };
     juce::TextButton advancedButton { "Advanced" };
@@ -77,7 +78,8 @@ private:
     std::array<PowerButton, ott::NumBands> powerButtons;
     std::array<juce::TextButton, ott::NumBands> soloButtons;
     std::array<std::unique_ptr<ValueField>, ott::NumBands> thresholdFields, attackFields, releaseFields;
-    std::array<juce::TextButton, 3> slopeButtons;   // 6 / 12 / 18 dB/oct
+    std::array<juce::TextButton, ott::NumBands> autoReleaseButtons;
+    std::array<juce::TextButton, 4> slopeButtons;   // 6 / 12 / 18 / 24 dB/oct
 
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::vector<std::unique_ptr<ButtonAttachment>> buttonAttachments;

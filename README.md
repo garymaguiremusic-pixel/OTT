@@ -15,9 +15,9 @@ The main view follows the layout of Xfer's OTT. The detailed settings are on the
 | Section | Controls |
 |---------|----------|
 | **Top** | **Depth** (dry/wet), **Time** (scales every attack/release), **In Gain**, **Out Gain**. **LINK** (on by default): turning In Gain up turns Out Gain down by the same amount. **Auto Gain** on/off |
-| **Bands** | One row per band (H / M / L). The number and knob are the band's output gain (default 10.3 / 5.7 / 10.3 dB). The bar runs from -80 dB (left) to 0 dB (right): the blue area is below the threshold (raised upward), the brown area is above it (pushed down). Drag an edge to move a threshold, and drag up/down inside an area to set its ratio. The strip through the middle shows the input level (grey), what the compressor does to it (orange = pushed down, light blue = lifted up) and where it ends up (white tick); the corner number is the gain change |
+| **Bands** | One row per band (H / M / L), with an **S** (solo) button beside each bar. The number and knob are the band's output gain (default 10.3 / 5.7 / 10.3 dB). The bar runs from -80 dB (left) to 0 dB (right): the blue area is below the threshold (raised upward), the brown area is above it (pushed down). Drag an edge to move a threshold, and drag up/down inside an area to set its ratio. The strip through the middle shows the input level (grey), what the compressor does to it (orange = pushed down, light blue = lifted up) and where it ends up (white tick); the corner number is the gain change |
 | **Upward / Downward** | Scale each direction (as on Xfer OTT); at 0 % that side is hidden from the bars. **Linear Phase** on = no phase shift (~43 ms latency), off = zero latency. **Soft Knee**, **RMS** (off = peak detection), **Advanced** |
-| **Advanced** | Three sections (High / Mid / Low): split frequency with High / Low on/off, power (off = band passes untouched), **S** (solo), **Threshold** (moves both edges of the band's bar together, double-click = 0), **Attack**, **Release**. **Crossover Slope**: 6 / 12 / 18 dB/oct (default 12) |
+| **Advanced** | Three sections (High / Mid / Low): split frequency with High / Low on/off, power (off = band passes untouched), **S** (solo), **Threshold** (-40 to +24 dB, moves both edges of the band's bar together, double-click = 0), **Attack**, **Release** with **Auto** release (short peaks recover fast, sustained compression slowly). **Crossover Slope**: 6 / 12 / 18 / 24 dB/oct (default 12) |
 | **Bars** | **Bypass**, 10 factory presets, **Size** (75-200 %), help |
 
 ![advanced page](docs/advanced.png)
@@ -32,7 +32,8 @@ The main view follows the layout of Xfer's OTT. The detailed settings are on the
 
 **Gain matching**: with **LINK** on, raising In Gain to drive the compressor harder lowers Out Gain
 by the same amount. **Auto Gain** goes further: it measures the loudness coming into the plugin and
-going out (K-weighted, the same weighting LUFS uses, over ~1.5 s) and keeps the output at the input's
+going out (K-weighted, the same weighting LUFS uses, in 100 ms blocks over a sliding 1 s window, so it
+settles in about a second) and keeps the output at the input's
 loudness, so louder never fools you into thinking it's better. The readout under the button shows the
 gain it is applying. Bypass always passes the untouched input.
 
@@ -51,13 +52,18 @@ from the band bars.
 
 **Linear Phase** is on by default. Turn it off for a zero-latency crossover, which has phase shift
 around the split points: a 1st-order pair (6 dB/oct), 2nd-order Linkwitz-Riley (12 dB/oct) or 3rd-order
-Butterworth (18 dB/oct), with a matching all-pass so the bands still sum flat. Switching fades out,
+Butterworth (18 dB/oct) or 4th-order Linkwitz-Riley (24 dB/oct), with a matching all-pass so the bands
+still sum flat.
+
+**Band gain and slope**: neighbouring bands overlap around each split, more so with gentle slopes. A low
+note at 50 Hz is partly in the Mid band too, and Mid's upward compression lifts that part, so turning
+L fully down cuts less than 24 dB. Steeper slopes (18 / 24 dB/oct) separate the bands more. Switching fades out,
 swaps the crossovers and fades back in, and the host is told about the new latency.
 
 With Linear Phase on:
 
 Two zero-phase FIR low-passes (LP1 at the low split, LP2 at the high split) run as FFT convolutions.
-Each has the response 1 / (1 + (f / fc)^k), with k = 1, 2 or 3 for 6, 12 or 18 dB/oct, so the high side
+Each has the response 1 / (1 + (f / fc)^k), with k = 1 to 4 for 6, 12, 18 or 24 dB/oct, so the high side
 (1 - LP) has the same slope and both sides are -6 dB at the split. Gentle slopes keep the filters short in
 time, which avoids the pre-ringing that steep linear-phase filters cause on transients.
 

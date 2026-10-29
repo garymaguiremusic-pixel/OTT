@@ -16,6 +16,10 @@ namespace ott
         towards the threshold, capped at +36 dB).
       - Upward and Downward scale the gain change in dB.
       - Time scales attack and release.
+      - Auto release (program dependent): two gain envelopes, a fast one (60 ms
+        release) and a slow one (250 ms attack, 1.2 s release); the band follows
+        whichever compresses more. Short peaks recover quickly, sustained
+        compression recovers slowly, so there's less pumping on dense material.
 */
 class BandCompressor
 {
@@ -27,7 +31,7 @@ public:
         float aboveThresh = -30.0f, aboveRatio = 4.0f;
         float belowThresh = -40.0f, belowRatio = 4.0f;
         float upward = 1.0f, downward = 1.0f, timeScale = 1.0f;
-        bool active = true, softKnee = true, rms = true;
+        bool active = true, softKnee = true, rms = true, autoRelease = false;
     };
 
     struct Meter
@@ -50,7 +54,7 @@ public:
     void reset()
     {
         envMs = 0.0f;
-        gainDb = 0.0f;
+        gainDb = fastDb = slowDb = 0.0f;
         inGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (settings.inputDb));
         outGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (settings.outputDb));
         activeMix.setCurrentAndTargetValue (settings.active ? 1.0f : 0.0f);
@@ -66,6 +70,9 @@ public:
         const float t = std::max (0.01f, s.timeScale);
         attackCoef  = coefFor (std::max (0.01f, s.attackMs * t));
         releaseCoef = coefFor (std::max (0.1f,  s.releaseMs * t));
+        fastReleaseCoef = coefFor (60.0f * t);
+        slowAttackCoef  = coefFor (std::max (250.0f, s.attackMs) * t);
+        slowReleaseCoef = coefFor (1200.0f * t);
 
         knee = s.softKnee ? 10.0f : 0.0f;
         downSlope = s.aboveRatio >= kRatioInf ? 1.0f : 1.0f - 1.0f / std::max (1.0f, s.aboveRatio);
@@ -128,8 +135,18 @@ public:
 
             // ballistics on the gain: falling gain = attack, rising gain = release
             const float target = computeGainDb (levelDb);
-            const float coef = target < gainDb ? attackCoef : releaseCoef;
-            gainDb = target + coef * (gainDb - target);
+            if (settings.autoRelease)
+            {
+                fastDb = target + (target < fastDb ? attackCoef : fastReleaseCoef) * (fastDb - target);
+                slowDb = target + (target < slowDb ? slowAttackCoef : slowReleaseCoef) * (slowDb - target);
+                gainDb = std::min (fastDb, slowDb);
+            }
+            else
+            {
+                const float coef = target < gainDb ? attackCoef : releaseCoef;
+                gainDb = target + coef * (gainDb - target);
+                fastDb = slowDb = gainDb;   // ready for a seamless switch to auto
+            }
 
             const float g = juce::Decibels::decibelsToGain (gainDb, -200.0f);
             float zl = yl * g, zr = yr * g;
@@ -170,8 +187,9 @@ private:
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> inGain { 1.0f }, outGain { 1.0f };
     juce::SmoothedValue<float> activeMix { 1.0f };
 
-    float envMs = 0.0f, gainDb = 0.0f;
+    float envMs = 0.0f, gainDb = 0.0f, fastDb = 0.0f, slowDb = 0.0f;
     float attackCoef = 0.0f, releaseCoef = 0.0f, rmsAlpha = 0.0f;
+    float fastReleaseCoef = 0.0f, slowAttackCoef = 0.0f, slowReleaseCoef = 0.0f;
     float knee = 10.0f, downSlope = 0.0f, upSlope = 0.0f;
 };
 

@@ -21,8 +21,8 @@ namespace ott
     the split frequencies are. Every band is delayed by the same amount, which is
     reported to the host as latency.
 
-    Each low-pass has the zero-phase magnitude 1 / (1 + (f / fc)^k), k = 1, 2, 3
-    for 6, 12 or 18 dB/oct. The complementary high side, 1 - L, then has exactly
+    Each low-pass has the zero-phase magnitude 1 / (1 + (f / fc)^k), k = 1..4
+    for 6, 12, 18 or 24 dB/oct. The complementary high side, 1 - L, then has exactly
     the same slope, and both sides are -6 dB at the split. Gentle slopes also keep
     the filters short in time, so there is very little pre-ringing.
 
