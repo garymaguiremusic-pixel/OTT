@@ -55,6 +55,7 @@ public:
     };
     std::array<BandMeter, ott::NumBands> meters;
     std::atomic<float> latencyMs { 0.0f };
+    std::atomic<float> autoGainMeterDb { 0.0f };   // gain Auto Gain is applying right now
 
     /** Editor scale, saved with the session. */
     std::atomic<float> editorScale { 1.0f };
@@ -81,6 +82,19 @@ private:
     juce::SmoothedValue<float> mixSmoothed, bypassMix;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> inputGain { 1.0f }, outputGain { 1.0f };
     std::array<juce::SmoothedValue<float>, ott::NumBands> bandSoloGain;
+
+    // Auto Gain: K-weighted loudness of the input and of the output
+    struct KWeighting
+    {
+        std::array<juce::dsp::IIR::Filter<float>, 2> shelf, highPass;
+        float process (int ch, float x) noexcept
+        {
+            return highPass[(size_t) ch].processSample (shelf[(size_t) ch].processSample (x));
+        }
+    };
+    KWeighting refWeighting, outWeighting;
+    float msRef = 0.0f, msOut = 0.0f, loudnessAlpha = 0.0f, autoGainDb = 0.0f;
+    std::vector<float> inGainBuffer;
 
     int maxBlock = 512;
     double currentSampleRate = 0.0;

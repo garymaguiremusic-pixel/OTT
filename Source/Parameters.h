@@ -25,6 +25,7 @@ namespace ParamIDs
     inline constexpr auto inGain      = "inGain";
     inline constexpr auto output      = "output";
     inline constexpr auto inOutLink   = "inOutLink";
+    inline constexpr auto autoGain    = "autoGain";    // on: match the output loudness to the input
     inline constexpr auto linearPhase = "linearPhase";
     inline constexpr auto time        = "time";
     inline constexpr auto upward      = "upward";

@@ -508,15 +508,17 @@ void DynamicsDisplay::mouseWheelMove (const MouseEvent& e, const MouseWheelDetai
 
 void DynamicsDisplay::updateMeters (float dt)
 {
-    const float fall = 36.0f * dt;   // dB per frame
+    // Calm ballistics so the bars read as a level, not a flicker: quick rise, slow fall.
+    const float rise = 1.0f - std::exp (-dt / 0.03f), fall = 1.0f - std::exp (-dt / 0.35f);
+    const float gainGlide = 1.0f - std::exp (-dt / 0.12f);
     for (int b = 0; b < 3; ++b)
     {
         auto& m = processor.meters[(size_t) b];
         auto& s = meterState[(size_t) b];
         const float in = m.inputDb.load(), out = m.outputDb.load();
-        s.in  = in  > s.in  ? in  : std::max (in,  s.in  - fall);
-        s.out = out > s.out ? out : std::max (out, s.out - fall);
-        s.gain += (m.gainDb.load() - s.gain) * 0.5f;
+        s.in  += (in  - s.in)  * (in  > s.in  ? rise : fall);
+        s.out += (out - s.out) * (out > s.out ? rise : fall);
+        s.gain += (m.gainDb.load() - s.gain) * gainGlide;
     }
     repaint();
 }
@@ -558,80 +560,64 @@ void DynamicsDisplay::paintLane (Graphics& g, int band, Rectangle<float> lane)
     const bool above = showAbove(), below = showBelow();
     const float ax = above ? xForDb (thresholdDb (band, ott::BandIDs::aboveThresh), lane) : lane.getRight();
     const float bx = below ? xForDb (thresholdDb (band, ott::BandIDs::belowThresh), lane) : lane.getX();
+    const bool hoverBelowEdge = hover.band == band && hover.target == Target::BelowHandle;
+    const bool hoverAboveEdge = hover.band == band && hover.target == Target::AboveHandle;
 
-    // Upward region (left of the below threshold) and downward region (right of the above threshold),
-    // with the untouched gap between them, as on Xfer's OTT.
+    // Upward area (left of the below threshold) and downward area (right of the above threshold).
     const auto belowRect = lane.withRight (bx);
     const auto aboveRect = lane.withLeft (ax);
-    g.setColour (Theme::upRegion);
+    g.setColour (Theme::upRegion.withAlpha (0.8f));
     g.fillRect (belowRect);
-    g.setColour (Theme::downRegion.brighter (0.15f));
+    g.setColour (Theme::downRegion.withAlpha (0.85f));
     g.fillRect (aboveRect);
+    if (hover.band == band && hover.target == Target::BelowRegion) { g.setColour (Colours::white.withAlpha (0.06f)); g.fillRect (belowRect); }
+    if (hover.band == band && hover.target == Target::AboveRegion) { g.setColour (Colours::white.withAlpha (0.06f)); g.fillRect (aboveRect); }
 
-    if (hover.band == band && hover.target == Target::BelowRegion) { g.setColour (Colours::white.withAlpha (0.07f)); g.fillRect (belowRect); }
-    if (hover.band == band && hover.target == Target::AboveRegion) { g.setColour (Colours::white.withAlpha (0.07f)); g.fillRect (aboveRect); }
-
-    // faint grid
-    g.setColour (Colours::black.withAlpha (0.18f));
-    for (int db = -70; db < 0; db += 10)
-        g.drawVerticalLine ((int) xForDb ((float) db, lane), lane.getY(), lane.getBottom());
-
-    // ratios
-    g.setFont (CustomLookAndFeel::uiFont (10.0f, true));
-    if (below && belowRect.getWidth() > 44.0f)
+    // Threshold edges: a thin line, highlighted while hovered.
+    auto drawEdge = [&] (float x, bool isHover)
     {
-        g.setColour (Colour (0xff8fc7ff).withAlpha (0.75f));
-        g.drawText ("1:" + ott::formatRatio (get (band, ott::BandIDs::belowRatio)),
-                    belowRect.reduced (5.0f, 3.0f), Justification::bottomLeft);
-    }
-    if (above && aboveRect.getWidth() > 44.0f)
-    {
-        g.setColour (Colour (0xffffc9a0).withAlpha (0.75f));
-        g.drawText (ott::formatRatio (get (band, ott::BandIDs::aboveRatio)) + ":1",
-                    aboveRect.reduced (5.0f, 3.0f), Justification::bottomRight);
-    }
+        if (isHover)
+        {
+            g.setColour (Theme::orange.withAlpha (0.25f));
+            g.fillRect (x - 3.0f, lane.getY(), 6.0f, lane.getHeight());
+        }
+        g.setColour (Theme::orange.withAlpha (isHover ? 1.0f : 0.55f));
+        g.fillRect (x - (isHover ? 1.0f : 0.5f), lane.getY(), isHover ? 2.0f : 1.0f, lane.getHeight());
+    };
+    if (below) drawEdge (bx, hoverBelowEdge);
+    if (above) drawEdge (ax, hoverAboveEdge);
 
-    // input level: translucent fill and a bright line; band output: thin bar along the bottom
+    // One meter strip through the middle: input level (grey), what the compressor does
+    // (orange = pushed down, light blue = lifted up) and a tick where the level ends up.
     const auto& m = meterState[(size_t) band];
-    const float inX = xForDb (m.in, lane);
-    g.setColour (Theme::blue.withAlpha (0.18f));
-    g.fillRect (lane.withRight (inX));
+    const auto strip = lane.withSizeKeepingCentre (lane.getWidth(), 8.0f);
+    g.setColour (Colours::black.withAlpha (0.35f));
+    g.fillRect (strip);
+
     if (m.in > ott::kMinDb + 0.5f)
     {
-        g.setColour (Colours::white.withAlpha (0.9f));
-        g.fillRect (inX - 1.0f, lane.getY(), 2.0f, lane.getHeight());
+        const float inX = xForDb (m.in, lane);
+        const float endX = xForDb (m.in + m.gain, lane);
+
+        g.setColour (Colours::white.withAlpha (0.28f));
+        g.fillRect (strip.withRight (std::min (inX, endX)));
+
+        if (std::abs (endX - inX) > 0.5f)
+        {
+            const bool pushedDown = endX < inX;
+            g.setColour (pushedDown ? Theme::orange.withAlpha (0.85f) : Colour (0xff8fc7ff).withAlpha (0.85f));
+            g.fillRect (Rectangle<float>::leftTopRightBottom (std::min (inX, endX), strip.getY(),
+                                                             std::max (inX, endX), strip.getBottom()));
+        }
+
+        g.setColour (Colours::white);
+        g.fillRect (endX - 1.0f, strip.getY() - 3.0f, 2.0f, strip.getHeight() + 6.0f);
     }
-    g.setColour (Theme::blue.withAlpha (0.85f));
-    g.fillRect (lane.withTop (lane.getBottom() - 3.0f).withRight (xForDb (m.out, lane)));
 
-    // gain change: orange marker where the compressor moves the level
-    if (m.in > ott::kMinDb + 0.5f && std::abs (m.gain) > 0.1f)
-    {
-        const float x1 = xForDb (m.in + m.gain, lane);
-        const float y = lane.getCentreY();
-        g.setColour (Theme::orange.withAlpha (0.5f));
-        g.drawLine (inX, y, x1, y, 2.0f);
-        g.setColour (Theme::orange);
-        g.fillRect (x1 - 1.5f, y - 6.0f, 3.0f, 12.0f);
-    }
-
-    // threshold handles (the region edges)
-    auto drawHandle = [&] (float x, bool isHover)
-    {
-        const auto colour = isHover ? Colour (0xffffd29a) : Theme::orange;
-        g.setColour (colour.withAlpha (isHover ? 0.35f : 0.18f));
-        g.fillRect (x - 2.5f, lane.getY(), 5.0f, lane.getHeight());
-        g.setColour (colour.withAlpha (isHover ? 1.0f : 0.8f));
-        g.fillRect (x - 0.75f, lane.getY(), 1.5f, lane.getHeight());
-    };
-    if (below) drawHandle (bx, hover.band == band && hover.target == Target::BelowHandle);
-    if (above) drawHandle (ax, hover.band == band && hover.target == Target::AboveHandle);
-
-    // gain change readout, top left
-    g.setFont (CustomLookAndFeel::uiFont (11.0f, true));
-    g.setColour (Colours::white.withAlpha (0.85f));
-    const String text = (m.gain >= 0.05f ? "+" : "") + String (m.gain, 1) + " dB";
-    g.drawText (text, lane.reduced (5.0f, 3.0f), Justification::topLeft);
+    // small, dim gain readout
+    g.setFont (CustomLookAndFeel::uiFont (10.0f, true));
+    g.setColour (Colours::white.withAlpha (0.55f));
+    g.drawText ((m.gain >= 0.05f ? "+" : "") + String (m.gain, 1) + " dB", lane.reduced (5.0f, 2.0f), Justification::topRight);
 }
 
 //==============================================================================
@@ -664,6 +650,7 @@ void HelpOverlay::paint (Graphics& g)
         "Three-band upward + downward compressor (OTT style).",
         "DEPTH = dry/wet.  TIME scales every attack and release.  IN GAIN drives all bands.",
         "LINK: turning IN GAIN up turns OUT GAIN down by the same amount (keeps the level matched).",
+        "AUTO GAIN: keeps the output as loud (K-weighted, like LUFS) as what comes into the plugin.",
         "BANDS: drag a region's edge to set its threshold, drag inside it (or wheel) to set its ratio.",
         "Left (blue) = below threshold, raised upward.  Right (brown) = above threshold, pushed down.",
         "The knob and number on each row are the band's output gain.",

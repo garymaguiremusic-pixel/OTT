@@ -32,6 +32,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout OttAudioProcessor::createPar
     floatParam (ParamIDs::inGain,   "In Gain",  { -24.0f, 24.0f }, 0.0f, db);
     floatParam (ParamIDs::output,   "Out Gain", { -24.0f, 24.0f }, 0.0f, db);
     boolParam (ParamIDs::inOutLink, "In/Out Link", true);
+    boolParam (ParamIDs::autoGain, "Auto Gain", false);
     boolParam (ParamIDs::linearPhase, "Linear Phase", true);
     floatParam (ParamIDs::time,     "Time",     logRange (20.0f, 500.0f, 100.0f), 100.0f, percent);
     floatParam (ParamIDs::upward,   "Upward",   { 0.0f, 100.0f }, 100.0f, percent);
@@ -153,6 +154,24 @@ void OttAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     mixSmoothed.setCurrentAndTargetValue (param (ParamIDs::mix) * 0.01f);
     bypassMix.reset (sampleRate, 0.03);
     bypassMix.setCurrentAndTargetValue (paramOn (ParamIDs::bypass) ? 1.0f : 0.0f);
+    inGainBuffer.assign ((size_t) maxBlock, 1.0f);
+    {
+        // K-weighting (ITU-R BS.1770): the loudness measure behind LUFS.
+        auto shelf = juce::dsp::IIR::Coefficients<float>::makeHighShelf (sampleRate, 1681.97, 0.7072, juce::Decibels::decibelsToGain (4.0f));
+        auto hp    = juce::dsp::IIR::Coefficients<float>::makeHighPass (sampleRate, 38.13, 0.5003);
+        for (auto* k : { &refWeighting, &outWeighting })
+            for (int ch = 0; ch < 2; ++ch)
+            {
+                k->shelf[(size_t) ch].coefficients = shelf;
+                k->highPass[(size_t) ch].coefficients = hp;
+                k->shelf[(size_t) ch].reset();
+                k->highPass[(size_t) ch].reset();
+            }
+    }
+    loudnessAlpha = 1.0f - std::exp (-1.0f / (1.5f * (float) sampleRate));   // ~1.5 s integration
+    msRef = msOut = 0.0f;
+    autoGainDb = 0.0f;
+
     inputGain.reset (sampleRate, 0.02);
     inputGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (param (ParamIDs::inGain)));
     outputGain.reset (sampleRate, 0.02);
@@ -279,7 +298,6 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
 
         for (int ch = 0; ch < numCh; ++ch)
             inputChunk.copyFrom (ch, 0, buffer, ch, start, n);
-        inputGain.applyGain (inputChunk, n);
 
         if (linearActive)
             crossover.process (inputChunk, n, bands[BandLow], bands[BandMid], bands[BandHigh], dryDelayed);
@@ -288,8 +306,28 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                                        param (ParamIDs::lowFreq), paramOn (ParamIDs::lowOn),
                                        param (ParamIDs::highFreq), paramOn (ParamIDs::highOn), activeSlope);
 
+        // In Gain goes on after the (linear) crossover, so the dry path stays the untouched
+        // input: Bypass and Auto Gain both refer to exactly what came into the plugin.
+        for (int i = 0; i < n; ++i)
+            inGainBuffer[(size_t) i] = inputGain.getNextValue();
+        for (auto& band : bands)
+            for (int ch = 0; ch < numCh; ++ch)
+                juce::FloatVectorOperations::multiply (band.getWritePointer (ch), inGainBuffer.data(), n);
+
         for (int b = 0; b < NumBands; ++b)
             compressors[(size_t) b].process (bands[(size_t) b].getArrayOfWritePointers(), numCh, n);
+
+        // Auto Gain: K-weighted loudness of the input vs. the processed output (measured on the
+        // previous chunk), gliding over ~300 ms, applied as a ramp across this chunk.
+        float agTarget = 0.0f;
+        if (paramOn (ParamIDs::autoGain))
+            agTarget = (msRef > 1.0e-6f && msOut > 1.0e-9f)      // hold through silence (< -60 dB)
+                         ? juce::jlimit (-24.0f, 24.0f, 10.0f * std::log10 (msRef / msOut))
+                         : autoGainDb;
+        const float agStart = juce::Decibels::decibelsToGain (autoGainDb);
+        autoGainDb = agTarget + (autoGainDb - agTarget) * std::exp (-(float) n / (0.3f * (float) currentSampleRate));
+        const float agStep = (juce::Decibels::decibelsToGain (autoGainDb) - agStart) / (float) n;
+        float ag = agStart;
 
         for (int i = 0; i < n; ++i)
         {
@@ -300,18 +338,34 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             const float out = outputGain.getNextValue();
             const float byp = bypassMix.getNextValue();
             const float fade = modeFade.getNextValue();
+            const float gIn = inGainBuffer[(size_t) i];
+            ag += agStep;
 
+            float refSq = 0.0f, outSq = 0.0f;
             for (int ch = 0; ch < numCh; ++ch)
             {
-                const float dry = dryDelayed.getSample (ch, i);
+                const float dry = dryDelayed.getSample (ch, i);   // the untouched input
                 const float wet = gH * bands[BandHigh].getSample (ch, i)
                                 + gM * bands[BandMid].getSample (ch, i)
                                 + gL * bands[BandLow].getSample (ch, i);
-                const float processed = (dry + mix * (wet - dry)) * out;
-                buffer.setSample (ch, start + i, fade * (processed + byp * (dry - processed)));
+                const float processed = (dry * gIn + mix * (wet - dry * gIn)) * out;
+
+                const float r = refWeighting.process (ch, dry);
+                const float o = outWeighting.process (ch, processed);
+                refSq += r * r;
+                outSq += o * o;
+
+                const float matched = processed * ag;
+                buffer.setSample (ch, start + i, fade * (matched + byp * (dry - matched)));
             }
+            msRef += loudnessAlpha * (refSq - msRef);
+            msOut += loudnessAlpha * (outSq - msOut);
         }
     }
+
+    if (msRef < 1.0e-20f) msRef = 0.0f;
+    if (msOut < 1.0e-20f) msOut = 0.0f;
+    autoGainMeterDb.store (autoGainDb);
 
     for (int b = 0; b < NumBands; ++b)
     {

@@ -64,7 +64,7 @@ private:
 
     // Main view
     std::unique_ptr<OttKnob> depthKnob, timeKnob, inGainKnob, outGainKnob, upwardKnob, downwardKnob;
-    juce::TextButton linkButton { "LINK" };
+    juce::TextButton linkButton { "LINK" }, autoGainButton { "Auto Gain" };
     std::array<std::unique_ptr<ValueField>, ott::NumBands> bandGainFields;
     std::array<std::unique_ptr<OttKnob>, ott::NumBands> bandGainKnobs;
     DynamicsDisplay display;

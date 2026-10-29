@@ -85,10 +85,14 @@ OttAudioProcessorEditor::OttAudioProcessorEditor (OttAudioProcessor& proc)
     makeKnob (timeKnob,     ott::ParamIDs::time,     "Time",     false, content);
     makeKnob (inGainKnob,   ott::ParamIDs::inGain,   "In Gain",  true,  content);
     makeKnob (outGainKnob,  ott::ParamIDs::output,   "Out Gain", true,  content);
+
     makeKnob (upwardKnob,   ott::ParamIDs::upward,   "Upward",   false, content);
     makeKnob (downwardKnob, ott::ParamIDs::downward, "Downward", false, content);
     inGainKnob->onUserChange = [this] (float oldValue, float newValue) { linkInputToOutput (oldValue, newValue); };
 
+    setupToggle (autoGainButton, ott::ParamIDs::autoGain,
+                 "Auto Gain: matches the output loudness (K-weighted, like LUFS) to the loudness coming into "
+                 "the plugin, so louder never fools you into thinking it's better", content);
     setupToggle (linkButton, ott::ParamIDs::inOutLink,
                  "Link: when on, raising IN GAIN lowers OUT GAIN by the same amount (and the other way round)", content);
 
@@ -290,11 +294,12 @@ void OttAudioProcessorEditor::layoutContent()
     presetBox.setBounds (368, 7, 144, 21);
 
     // MAIN: four knobs, values in a strip underneath
-    const int mainCentres[4] = { 71, 197, 323, 449 };
+    const int mainCentres[4] = { 56, 150, 250, 366 };
     OttKnob* mainKnobs[4] = { depthKnob.get(), timeKnob.get(), inGainKnob.get(), outGainKnob.get() };
     for (int i = 0; i < 4; ++i)
-        mainKnobs[i]->setBounds (mainCentres[i] - 42, 62, 84, 108);
-    linkButton.setBounds (364, 106, 44, 18);
+        mainKnobs[i]->setBounds (mainCentres[i] - 39, 62, 78, 108);
+    linkButton.setBounds (291, 106, 34, 18);
+    autoGainButton.setBounds (420, 102, 82, 24);
 
     // BANDS
     display.setBounds (displayBounds);
@@ -376,6 +381,8 @@ void OttAudioProcessorEditor::timerCallback()
     highFreqField->setEnabled (highOn);
     lowFreqField->setEnabled (lowOn);
 
+    autoGainButton.setButtonText (isOn (ott::ParamIDs::autoGain) ? "On" : "Off");
+
     const int slope = juce::roundToInt (processor.apvts.getRawParameterValue (ott::ParamIDs::slope)->load());
     for (int i = 0; i < 3; ++i)
         slopeButtons[(size_t) i].setToggleState (i == slope, dontSendNotification);
@@ -383,7 +390,10 @@ void OttAudioProcessorEditor::timerCallback()
     if (advanced.isVisible())
         advanced.repaint (82, kAdvRowY[ott::BandMid] + 3, 106, 24);   // mid range text
     else
+    {
         content.repaint (0, kBottomBarY, kW, kH - kBottomBarY);       // latency text follows Linear Phase
+        content.repaint (420, 150, 82, 22);                            // auto gain readout
+    }
 }
 
 //==============================================================================
@@ -489,6 +499,17 @@ void OttAudioProcessorEditor::paintContent (Graphics& g)
 
     // value strips under the knobs (like the OTT readouts)
     CustomLookAndFeel::drawInsetBox (g, { 18.0f, 150.0f, 484.0f, 22.0f });
+
+    // Auto Gain: title over the button, current gain in the strip
+    CustomLookAndFeel::drawSmallLabel (g, "Auto Gain", { 420.0f, 62.0f, 82.0f, 14.0f });
+    {
+        const bool agOn = isOn (ott::ParamIDs::autoGain);
+        const float ag = processor.autoGainMeterDb.load();
+        g.setFont (CustomLookAndFeel::uiFont (11.5f, true));
+        g.setColour (agOn ? Theme::blue : Theme::labelText.withAlpha (0.6f));
+        g.drawText (agOn ? (ag >= 0.0f ? "+" : "") + String (ag, 1) + " dB" : String ("Off"),
+                    Rectangle<float> (420.0f, 152.0f, 82.0f, 16.0f), Justification::centred);
+    }
     CustomLookAndFeel::drawInsetBox (g, { 146.0f, 562.0f, 228.0f, 22.0f });
 
     // band rows: separators and H / M / L
@@ -529,8 +550,9 @@ void OttAudioProcessorEditor::paintContent (Graphics& g)
     if (text.isEmpty())
     {
         const float latency = processor.latencyMs.load();
-        text = latency > 0.0f ? "LINEAR PHASE  -  LATENCY " + String (latency, 1) + " ms"
+        text = latency > 0.0f ? "LINEAR PHASE  -  " + String (latency, 1) + " ms"
                               : "MINIMUM PHASE  -  ZERO LATENCY";
+
     }
     g.setColour (statusText.isNotEmpty() ? Theme::blue : Colour (0xffc8cdd2));
     g.drawFittedText (text, inset.reduced (6.0f, 0.0f).toNearestInt(), Justification::centred, 1, 0.8f);

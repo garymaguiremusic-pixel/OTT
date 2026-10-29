@@ -14,8 +14,8 @@ The main view follows the layout of Xfer's OTT. The detailed settings are on the
 
 | Section | Controls |
 |---------|----------|
-| **Top** | **Depth** (dry/wet), **Time** (scales every attack/release), **In Gain**, **Out Gain**. **LINK** (on by default): turning In Gain up turns Out Gain down by the same amount |
-| **Bands** | One row per band (H / M / L). The number and knob are the band's output gain (default 10.3 / 5.7 / 10.3 dB). The bar runs from -80 dB (left) to 0 dB (right): the blue area is below the threshold (raised upward), the brown area is above it (pushed down). Drag an edge to move a threshold, and drag up/down inside an area to set its ratio. The white line is the input level, the orange marker shows where the compressor moves it, and the top-left number is the gain change |
+| **Top** | **Depth** (dry/wet), **Time** (scales every attack/release), **In Gain**, **Out Gain**. **LINK** (on by default): turning In Gain up turns Out Gain down by the same amount. **Auto Gain** on/off |
+| **Bands** | One row per band (H / M / L). The number and knob are the band's output gain (default 10.3 / 5.7 / 10.3 dB). The bar runs from -80 dB (left) to 0 dB (right): the blue area is below the threshold (raised upward), the brown area is above it (pushed down). Drag an edge to move a threshold, and drag up/down inside an area to set its ratio. The strip through the middle shows the input level (grey), what the compressor does to it (orange = pushed down, light blue = lifted up) and where it ends up (white tick); the corner number is the gain change |
 | **Upward / Downward** | Scale each direction (as on Xfer OTT); at 0 % that side is hidden from the bars. **Linear Phase** on = no phase shift (~43 ms latency), off = zero latency. **Soft Knee**, **RMS** (off = peak detection), **Advanced** |
 | **Advanced** | Three sections (High / Mid / Low): split frequency with High / Low on/off, power (off = band passes untouched), **S** (solo), **Threshold** (moves both edges of the band's bar together, double-click = 0), **Attack**, **Release**. **Crossover Slope**: 6 / 12 / 18 dB/oct (default 12) |
 | **Bars** | **Bypass**, 10 factory presets, **Size** (75-200 %), help |
@@ -31,7 +31,10 @@ The main view follows the layout of Xfer's OTT. The detailed settings are on the
 | Low  | 5.20 dB | 10.3 dB | 47.8 ms | 282 ms | -33.8 dB / 66.7 : 1 | -40.8 dB / 1 : 4.17 |
 
 **Gain matching**: with **LINK** on, raising In Gain to drive the compressor harder lowers Out Gain
-by the same amount, so the overall level stays roughly where it was.
+by the same amount. **Auto Gain** goes further: it measures the loudness coming into the plugin and
+going out (K-weighted, the same weighting LUFS uses, over ~1.5 s) and keeps the output at the input's
+loudness, so louder never fools you into thinking it's better. The readout under the button shows the
+gain it is applying. Bypass always passes the untouched input.
 
 When **Upward** or **Downward** is at 0 %, that side (its coloured area and orange edge) disappears
 from the band bars.
