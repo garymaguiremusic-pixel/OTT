@@ -81,7 +81,7 @@ private:
     juce::SmoothedValue<float> modeFade { 1.0f };
     std::array<ott::BandCompressor, ott::NumBands> compressors;
 
-    juce::AudioBuffer<float> inputChunk, dryDelayed;
+    juce::AudioBuffer<float> inputChunk, dryDelayed, phaseMatchedDry;
     std::array<juce::AudioBuffer<float>, ott::NumBands> bands;
 
     juce::SmoothedValue<float> mixSmoothed, bypassMix;

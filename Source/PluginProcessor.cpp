@@ -147,6 +147,7 @@ void OttAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     inputChunk.setSize (numCh, maxBlock);
     dryDelayed.setSize (numCh, maxBlock);
+    phaseMatchedDry.setSize (numCh, maxBlock);
     for (auto& b : bands)
         b.setSize (numCh, maxBlock);
 
@@ -344,6 +345,22 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
                                        param (ParamIDs::lowFreq), paramOn (ParamIDs::lowOn),
                                        param (ParamIDs::highFreq), paramOn (ParamIDs::highOn), activeSlope);
 
+        // The dry signal for Depth has to be in phase with the bands, or a partial mix cancels
+        // around the split points (a "filter" sound). Linear phase: the delayed input already is.
+        // Zero latency: the crossover's all-pass shifts the bands' phase, so use the bands summed
+        // back together before compression: the input with exactly the bands' phase, same level.
+        const juce::AudioBuffer<float>* mixDry = &dryDelayed;
+        if (! linearActive)
+        {
+            for (int ch = 0; ch < numCh; ++ch)
+            {
+                phaseMatchedDry.copyFrom (ch, 0, bands[BandLow], ch, 0, n);
+                phaseMatchedDry.addFrom (ch, 0, bands[BandMid], ch, 0, n);
+                phaseMatchedDry.addFrom (ch, 0, bands[BandHigh], ch, 0, n);
+            }
+            mixDry = &phaseMatchedDry;
+        }
+
         // In Gain goes on after the (linear) crossover, so the dry path stays the untouched
         // input: Bypass and Auto Gain both refer to exactly what came into the plugin.
         for (int i = 0; i < n; ++i)
@@ -383,10 +400,11 @@ void OttAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mi
             for (int ch = 0; ch < numCh; ++ch)
             {
                 const float dry = dryDelayed.getSample (ch, i);   // the untouched input
+                const float depthDry = mixDry->getSample (ch, i) * gIn;
                 const float wet = gH * bands[BandHigh].getSample (ch, i)
                                 + gM * bands[BandMid].getSample (ch, i)
                                 + gL * bands[BandLow].getSample (ch, i);
-                const float processed = (dry * gIn + mix * (wet - dry * gIn)) * out;
+                const float processed = (depthDry + mix * (wet - depthDry)) * out;
 
                 const float r = refWeighting.process (ch, dry);
                 const float o = outWeighting.process (ch, processed);
