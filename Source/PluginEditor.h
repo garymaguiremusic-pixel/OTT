@@ -7,8 +7,8 @@
 
 //==============================================================================
 /**
-    Main view laid out like Xfer's OTT (global knobs, three band rows, upward /
-    downward), drawn in the VIRUS DELAY style. The detailed per-band settings
+    Main view: global knobs, three band rows (S / A, Amount, meter, band gain) and
+    upward / downward, drawn in the VIRUS DELAY style. The detailed per-band settings
     live on the ADVANCED page, which slides over the main view.
 
     Everything is laid out at a fixed base size inside `Content`, which is then
@@ -78,8 +78,9 @@ private:
     std::array<PowerButton, ott::NumBands> powerButtons;
     std::array<juce::TextButton, ott::NumBands> soloButtons;
     std::array<std::unique_ptr<ValueField>, ott::NumBands> thresholdFields, attackFields, releaseFields;
-    std::array<juce::TextButton, ott::NumBands> autoReleaseButtons;
+    std::array<juce::TextButton, ott::NumBands> autoReleaseButtons, bypUpButtons, bypDownButtons;
     std::array<juce::TextButton, 4> slopeButtons;   // 6 / 12 / 18 / 24 dB/oct
+    juce::TextButton cleanXovButton { "Clean XOV" };
 
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::vector<std::unique_ptr<ButtonAttachment>> buttonAttachments;

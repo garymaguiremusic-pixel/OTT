@@ -51,7 +51,7 @@ OttAudioProcessorEditor::OttAudioProcessorEditor (OttAudioProcessor& proc)
     content.setBounds (0, 0, kW, kH);
 
     auto status = [this] (const String& s) { setStatus (s); };
-    auto db1 = [] (float v) { return String (v, 1); };
+    auto db1 = [] (float v) { return v <= ott::kGainFloorDb + 0.05f ? String ("-inf") : String (v, 1); };
     auto db  = [] (float v) { return ott::formatDb (v); };
 
     // Top strip ----------------------------------------------------------------------
@@ -87,7 +87,7 @@ OttAudioProcessorEditor::OttAudioProcessorEditor (OttAudioProcessor& proc)
         }
         parent.addAndMakeVisible (*knob);
     };
-    makeKnob (depthKnob,    ott::ParamIDs::mix,      "Depth",    false, content);
+    makeKnob (depthKnob,    ott::ParamIDs::depth,    "Depth",    false, content);
     makeKnob (timeKnob,     ott::ParamIDs::time,     "Time",     false, content);
     makeKnob (inGainKnob,   ott::ParamIDs::inGain,   "In Gain",  true,  content);
     makeKnob (outGainKnob,  ott::ParamIDs::output,   "Out Gain", true,  content);
@@ -134,7 +134,6 @@ OttAudioProcessorEditor::OttAudioProcessorEditor (OttAudioProcessor& proc)
     }
 
     display.onStatus = status;
-    display.compact = true;
     content.addAndMakeVisible (display);
 
     setupToggle (linearPhaseButton, ott::ParamIDs::linearPhase,
@@ -195,16 +194,26 @@ OttAudioProcessorEditor::OttAudioProcessorEditor (OttAudioProcessor& proc)
             advanced.addAndMakeVisible (*f);
         };
         auto ms = [] (float v) { return ott::formatMs (v); };
-        field (thresholdFields[i], ott::BandIDs::threshold, [] (float v) { return (v > 0.0f ? "+" : "") + ott::formatDb (v, 1); });
+        field (thresholdFields[i], ott::BandIDs::threshold, [] (float v) { return ott::formatDb (v, 1); });
         field (attackFields[i],    ott::BandIDs::attack,    ms);
         field (releaseFields[i],   ott::BandIDs::release,   ms);
         thresholdFields[i]->resetValue = 0.0f;
+
+        bypUpButtons[i].setButtonText ("Byp Up");
+        setupToggle (bypUpButtons[i], ott::bandParam (b, ott::BandIDs::bypUp),
+                     "Bypass the upward compression on the " + name.toLowerCase() + " band", advanced);
+        bypDownButtons[i].setButtonText ("Byp Down");
+        setupToggle (bypDownButtons[i], ott::bandParam (b, ott::BandIDs::bypDown),
+                     "Bypass the downward compression on the " + name.toLowerCase() + " band", advanced);
 
         autoReleaseButtons[i].setButtonText ("Auto");
         setupToggle (autoReleaseButtons[i], ott::bandParam (b, ott::BandIDs::autoRelease),
                      "Auto release: short peaks recover fast, long stretches of compression recover slowly "
                      "(less pumping). Replaces the Release time while on", advanced);
     }
+
+    setupToggle (cleanXovButton, ott::ParamIDs::cleanXov,
+                 "Clean XOV: run the zero-latency crossover in double precision (used with Linear Phase off)", advanced);
 
     const char* slopeNames[] = { "6 dB/oct", "12 dB/oct", "18 dB/oct", "24 dB/oct" };
     for (int i = 0; i < 4; ++i)
@@ -342,7 +351,7 @@ void OttAudioProcessorEditor::layoutContent()
         bandGainKnobs[(size_t) b]->setBounds (420, r + 4, 56, 56);
         lanes[(size_t) b] = { 8.0f, (float) (r - displayBounds.getY() + 16), 236.0f, 32.0f };
     }
-    display.setLaneBounds (lanes, {});
+    display.setLaneBounds (lanes);
 
     // UPWARD / DOWNWARD and options
     upwardKnob->setBounds (200 - 42, 474, 84, 108);
@@ -365,6 +374,8 @@ void OttAudioProcessorEditor::layoutContent()
         const int r = kAdvRowY[b];
         powerButtons[i].setBounds (196, r + 4, 28, 22);
         soloButtons[i].setBounds (228, r + 4, 30, 22);
+        bypUpButtons[i].setBounds (300, r + 4, 98, 22);
+        bypDownButtons[i].setBounds (404, r + 4, 100, 22);
 
         thresholdFields[i]->setBounds (kAdvCol[0], r + 60, kAdvColW, 28);
         attackFields[i]->setBounds    (kAdvCol[1], r + 60, kAdvColW, 28);
@@ -377,7 +388,8 @@ void OttAudioProcessorEditor::layoutContent()
     lowFreqField->setBounds (82, kAdvRowY[ott::BandLow] + 3, 106, 24);
 
     for (int i = 0; i < 4; ++i)
-        slopeButtons[(size_t) i].setBounds (16 + i * 123, 392, 119, 28);
+        slopeButtons[(size_t) i].setBounds (16 + i * 96, 392, 92, 28);
+    cleanXovButton.setBounds (404, 392, 100, 28);
     backButton.setBounds (kAdvCol[2], 512, kAdvColW, 28);
 }
 
@@ -416,7 +428,8 @@ void OttAudioProcessorEditor::timerCallback()
                               (Component*) thresholdFields[i].get(), (Component*) attackFields[i].get(), (Component*) releaseFields[i].get(),
                               (Component*) &powerButtons[i], (Component*) &soloButtons[i],
                               (Component*) &mainSoloButtons[i], (Component*) &autoReleaseButtons[i],
-                              (Component*) &bandAutoGainButtons[i], (Component*) amountKnobs[i].get() })
+                              (Component*) &bandAutoGainButtons[i], (Component*) amountKnobs[i].get(),
+                              (Component*) &bypUpButtons[i], (Component*) &bypDownButtons[i] })
             if (c->isEnabled() != on)
                 c->setEnabled (on);
 
@@ -434,13 +447,11 @@ void OttAudioProcessorEditor::timerCallback()
     for (int i = 0; i < 4; ++i)
         slopeButtons[(size_t) i].setToggleState (i == slope, dontSendNotification);
 
+    content.repaint (0, kBottomBarY, kW, kH - kBottomBarY);           // input meter, latency text
     if (advanced.isVisible())
         advanced.repaint (82, kAdvRowY[ott::BandMid] + 3, 106, 24);   // mid range text
     else
-    {
-        content.repaint (0, kBottomBarY, kW, kH - kBottomBarY);       // latency text follows Linear Phase
         content.repaint (420, 150, 82, 22);                            // auto gain readout
-    }
 }
 
 //==============================================================================
@@ -590,15 +601,32 @@ void OttAudioProcessorEditor::paintContent (Graphics& g)
     g.setFont (CustomLookAndFeel::uiFont (10.5f, true));
     g.drawText ("OTT", tab, Justification::centred);
 
-    auto inset = Rectangle<float> (68.0f, bar.getY() + 7.0f, 314.0f, 20.0f);
+    // input peak meter (L / R)
+    {
+        auto meterArea = Rectangle<float> (66.0f, bar.getY() + 8.0f, 60.0f, 18.0f);
+        CustomLookAndFeel::drawInsetBox (g, meterArea, 3.0f);
+        auto bars = meterArea.reduced (4.0f, 4.0f);
+        for (int ch = 0; ch < 2; ++ch)
+        {
+            auto row = bars.removeFromTop (bars.getHeight() * (ch == 0 ? 0.5f : 1.0f)).reduced (0.0f, 1.0f);
+            const float db = juce::Decibels::gainToDecibels (processor.inputPeak[(size_t) ch].load(), -60.0f);
+            const float level = jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
+            g.setColour (Colours::black.withAlpha (0.4f));
+            g.fillRect (row);
+            g.setColour (db > -0.5f ? Theme::red : Theme::blue);
+            g.fillRect (row.withWidth (row.getWidth() * level));
+        }
+    }
+
+    auto inset = Rectangle<float> (132.0f, bar.getY() + 7.0f, 250.0f, 20.0f);
     CustomLookAndFeel::drawInsetBox (g, inset, 3.0f);
     g.setFont (CustomLookAndFeel::uiFont (11.5f, true));
     String text = statusText;
     if (text.isEmpty())
     {
         const float latency = processor.latencyMs.load();
-        text = latency > 0.0f ? "LINEAR PHASE  -  " + String (latency, 1) + " ms"
-                              : "MINIMUM PHASE  -  ZERO LATENCY";
+        text = (isOn (ott::ParamIDs::linearPhase) ? "LINEAR PHASE  -  " : "MIN PHASE  -  ")
+             + String (latency, 1) + " ms LATENCY";
 
     }
     g.setColour (statusText.isNotEmpty() ? Theme::blue : Colour (0xffc8cdd2));
@@ -650,7 +678,7 @@ void OttAudioProcessorEditor::paintAdvanced (Graphics& g)
     // a short note in the empty space
     g.setFont (CustomLookAndFeel::uiFont (11.0f));
     g.setColour (Theme::labelText.withAlpha (0.8f));
-    g.drawFittedText ("THRESHOLD moves where the band starts compressing (both its upward and downward\n"
-                      "thresholds together). The AMOUNT knobs on the main view set how much is used.",
+    g.drawFittedText ("THRESHOLD moves both of the band's thresholds; ATTACK / RELEASE are at Time 100 %.\n"
+                      "BYP UP / DOWN switch a direction off for that band. CLEAN XOV = double precision.",
                       Rectangle<int> (16, 436, 488, 40), Justification::centredLeft, 2);
 }

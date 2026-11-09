@@ -284,229 +284,86 @@ DynamicsDisplay::DynamicsDisplay (OttAudioProcessor& p) : processor (p)
 {
 }
 
-void DynamicsDisplay::setLaneBounds (const std::array<Rectangle<float>, 3>& l, Rectangle<float> scale)
+void DynamicsDisplay::setLaneBounds (const std::array<Rectangle<float>, 3>& l)
 {
     lanes = l;
-    scaleArea = scale;
     repaint();
 }
 
-float DynamicsDisplay::get (int band, const char* id) const
+float DynamicsDisplay::get (const String& id) const
 {
-    return processor.apvts.getRawParameterValue (ott::bandParam (band, id))->load();
+    return processor.apvts.getRawParameterValue (id)->load();
 }
 
 bool DynamicsDisplay::bandEnabled (int band) const
 {
-    auto on = [this] (const char* id) { return processor.apvts.getRawParameterValue (id)->load() >= 0.5f; };
-    if (band == ott::BandHigh) return on (ott::ParamIDs::highOn);
-    if (band == ott::BandLow)  return on (ott::ParamIDs::lowOn);
+    if (band == ott::BandHigh) return get (ott::ParamIDs::highOn) >= 0.5f;
+    if (band == ott::BandLow)  return get (ott::ParamIDs::lowOn) >= 0.5f;
     return true;
 }
 
-// A side of the display is only shown (and editable) while its knob is above 0 %.
-bool DynamicsDisplay::showAbove() const
+float DynamicsDisplay::downThresholdDb (int band) const
 {
-    return processor.apvts.getRawParameterValue (ott::ParamIDs::downward)->load() > 0.05f;
+    return get (ott::bandParam (band, ott::BandIDs::threshold)) - ott::Engine::kDownThresholdDb[(size_t) band];
 }
 
-bool DynamicsDisplay::showBelow() const
+float DynamicsDisplay::upThresholdDb (int band) const
 {
-    return processor.apvts.getRawParameterValue (ott::ParamIDs::upward)->load() > 0.05f;
+    return get (ott::bandParam (band, ott::BandIDs::threshold)) - ott::Engine::kUpThresholdDb[(size_t) band];
 }
 
-float DynamicsDisplay::thresholdDb (int band, const char* id) const
+bool DynamicsDisplay::downwardActive (int band) const
 {
-    // The band's Threshold control shifts both thresholds together.
-    return get (band, id) + get (band, ott::BandIDs::threshold);
+    return get (ott::ParamIDs::depth) > 0.05f && get (ott::ParamIDs::downward) > 0.05f
+        && get (ott::bandParam (band, ott::BandIDs::bypDown)) < 0.5f;
 }
 
-float DynamicsDisplay::xForDb (float db, const Rectangle<float>& lane) const
+bool DynamicsDisplay::upwardActive (int band) const
 {
-    return lane.getX() + lane.getWidth() * (jlimit (ott::kMinDb, 0.0f, db) - ott::kMinDb) / -ott::kMinDb;
+    return get (ott::ParamIDs::depth) > 0.05f && get (ott::ParamIDs::upward) > 0.05f
+        && get (ott::bandParam (band, ott::BandIDs::bypUp)) < 0.5f;
 }
 
-float DynamicsDisplay::dbForX (float x, const Rectangle<float>& lane) const
+float DynamicsDisplay::xForDb (float db, const Rectangle<float>& meter) const
 {
-    return ott::kMinDb + (x - lane.getX()) / lane.getWidth() * -ott::kMinDb;
+    return meter.getX() + meter.getWidth() * (jlimit (ott::kMinDb, 0.0f, db) - ott::kMinDb) / -ott::kMinDb;
 }
 
-DynamicsDisplay::Hit DynamicsDisplay::findHit (Point<float> p) const
+int DynamicsDisplay::bandAt (Point<float> pos) const
 {
-    if (compact)
+    for (int b = 0; b < 3; ++b)
+        if (lanes[(size_t) b].expanded (3.0f).contains (pos))
+            return b;
+    return -1;
+}
+
+String DynamicsDisplay::describe (int band) const
+{
+    if (band < 0)
         return {};
-
-    for (int band = 0; band < 3; ++band)
-    {
-        const auto& lane = lanes[(size_t) band];
-        if (! lane.expanded (4.0f, 0.0f).contains (p) || ! bandEnabled (band))
-            continue;
-
-        const float ax = xForDb (thresholdDb (band, ott::BandIDs::aboveThresh), lane);
-        const float bx = xForDb (thresholdDb (band, ott::BandIDs::belowThresh), lane);
-        const float da = showAbove() ? std::abs (p.x - ax) : 1.0e9f;
-        const float db = showBelow() ? std::abs (p.x - bx) : 1.0e9f;
-
-        constexpr float grab = 6.0f;
-        if (std::min (da, db) <= grab)
-        {
-            // When both handles overlap, pick by side: right of the line = above, left = below.
-            if (da <= grab && db <= grab)
-                return { band, p.x >= ax ? Target::AboveHandle : Target::BelowHandle };
-            return { band, da < db ? Target::AboveHandle : Target::BelowHandle };
-        }
-        if (showAbove() && p.x > ax)  return { band, Target::AboveRegion };
-        if (showBelow() && p.x < bx)  return { band, Target::BelowRegion };
-        return { band, Target::None };
-    }
-    return {};
-}
-
-RangedAudioParameter* DynamicsDisplay::paramFor (const Hit& h) const
-{
-    const char* id = nullptr;
-    switch (h.target)
-    {
-        case Target::AboveHandle: id = ott::BandIDs::aboveThresh; break;
-        case Target::BelowHandle: id = ott::BandIDs::belowThresh; break;
-        case Target::AboveRegion: id = ott::BandIDs::aboveRatio;  break;
-        case Target::BelowRegion: id = ott::BandIDs::belowRatio;  break;
-        case Target::None:        return nullptr;
-    }
-    return processor.apvts.getParameter (ott::bandParam (h.band, id));
-}
-
-void DynamicsDisplay::setParam (RangedAudioParameter& p, float v)
-{
-    const auto& id = p.getParameterID();
-    const auto range = p.getNormalisableRange();
-    v = jlimit (range.start, range.end, v);
-
-    // The below threshold can't pass the above threshold, and vice versa.
-    for (int band = 0; band < 3; ++band)
-    {
-        if (id == ott::bandParam (band, ott::BandIDs::aboveThresh))
-            v = std::max (v, get (band, ott::BandIDs::belowThresh));
-        else if (id == ott::bandParam (band, ott::BandIDs::belowThresh))
-            v = std::min (v, get (band, ott::BandIDs::aboveThresh));
-    }
-    p.setValueNotifyingHost (p.convertTo0to1 (v));
-}
-
-String DynamicsDisplay::describe (const Hit& h) const
-{
-    if (h.band < 0 || h.target == Target::None)
-        return {};
-
-    const String band = String (ott::bandName (h.band)).toUpperCase();
-    switch (h.target)
-    {
-        case Target::AboveHandle: return band + "   ABOVE THRESHOLD   " + ott::formatDb (thresholdDb (h.band, ott::BandIDs::aboveThresh), 1);
-        case Target::BelowHandle: return band + "   BELOW THRESHOLD   " + ott::formatDb (thresholdDb (h.band, ott::BandIDs::belowThresh), 1);
-        case Target::AboveRegion: return band + "   ABOVE RATIO (DOWNWARD)   " + ott::formatRatio (get (h.band, ott::BandIDs::aboveRatio)) + " : 1";
-        case Target::BelowRegion: return band + "   BELOW RATIO (UPWARD)   1 : " + ott::formatRatio (get (h.band, ott::BandIDs::belowRatio));
-        case Target::None:        break;
-    }
-    return {};
+    const auto& m = meterState[(size_t) band];
+    return String (ott::bandName (band)).toUpperCase()
+         + "   LEVEL " + (m.envelope <= ott::kMinDb + 0.1f ? String ("-inf") : String (m.envelope, 1))
+         + "   DOWN THR " + String (downThresholdDb (band), 1)
+         + "   UP THR " + String (upThresholdDb (band), 1) + " dB";
 }
 
 String DynamicsDisplay::getTooltip()
 {
-    const auto text = describe (hover);
-    if (text.isEmpty())
-        return {};
-    const bool handle = hover.target == Target::AboveHandle || hover.target == Target::BelowHandle;
-    return text + (handle ? "\nDrag left/right or use the wheel (1 dB, Shift = 0.1). Double-click = default."
-                          : "\nDrag up/down or use the wheel to set the ratio (Shift = fine). Double-click = default.");
+    return hoverBand < 0 ? String()
+                         : describe (hoverBand) + "\nGrey = level, orange tick = down threshold, blue tick = up threshold.";
 }
 
 void DynamicsDisplay::mouseMove (const MouseEvent& e)
 {
-    const auto h = findHit (e.position);
-    if (h.band != hover.band || h.target != hover.target)
-    {
-        hover = h;
-        setMouseCursor (h.target == Target::AboveHandle || h.target == Target::BelowHandle ? MouseCursor::LeftRightResizeCursor
-                        : h.target == Target::None ? MouseCursor::NormalCursor : MouseCursor::UpDownResizeCursor);
-        repaint();
-    }
-    if (onStatus) onStatus (describe (hover));
+    hoverBand = bandAt (e.position);
+    if (onStatus) onStatus (describe (hoverBand));
 }
 
 void DynamicsDisplay::mouseExit (const MouseEvent&)
 {
-    hover = {};
+    hoverBand = -1;
     if (onStatus) onStatus ({});
-    repaint();
-}
-
-void DynamicsDisplay::mouseDown (const MouseEvent& e)
-{
-    active = findHit (e.position);
-    if (auto* p = paramFor (active))
-    {
-        dragStartValue = p->convertFrom0to1 (p->getValue());
-        dragStartProportion = p->getValue();
-        dragStartX = e.position.x;
-        dragStartY = e.position.y;
-        p->beginChangeGesture();
-    }
-}
-
-void DynamicsDisplay::mouseDrag (const MouseEvent& e)
-{
-    auto* p = paramFor (active);
-    if (p == nullptr)
-        return;
-
-    const auto& lane = lanes[(size_t) active.band];
-    if (active.target == Target::AboveHandle || active.target == Target::BelowHandle)
-    {
-        const float dbPerPixel = -ott::kMinDb / lane.getWidth() * (e.mods.isShiftDown() ? 0.1f : 1.0f);
-        setParam (*p, dragStartValue + (e.position.x - dragStartX) * dbPerPixel);
-    }
-    else
-    {
-        const float prop = jlimit (0.0f, 1.0f, dragStartProportion + (dragStartY - e.position.y) / dragPixelsForFullRange (e.mods));
-        setParam (*p, p->convertFrom0to1 (prop));
-    }
-    if (onStatus) onStatus (describe (active));
-    repaint();
-}
-
-void DynamicsDisplay::mouseUp (const MouseEvent&)
-{
-    if (auto* p = paramFor (active))
-        p->endChangeGesture();
-    active = {};
-}
-
-void DynamicsDisplay::mouseDoubleClick (const MouseEvent& e)
-{
-    if (auto* p = paramFor (findHit (e.position)))
-    {
-        p->beginChangeGesture();
-        setParam (*p, p->convertFrom0to1 (p->getDefaultValue()));
-        p->endChangeGesture();
-        repaint();
-    }
-}
-
-void DynamicsDisplay::mouseWheelMove (const MouseEvent& e, const MouseWheelDetails& wheel)
-{
-    const auto h = findHit (e.position);
-    auto* p = paramFor (h);
-    if (p == nullptr)
-        return;
-
-    if (const int steps = ParamControl::wheelSteps (wheel, wheelAccumulator); steps != 0)
-    {
-        p->beginChangeGesture();
-        setParam (*p, p->convertFrom0to1 (p->getValue()) + (float) steps * ParamControl::wheelStepSize (e.mods));
-        p->endChangeGesture();
-        if (onStatus) onStatus (describe (h));
-        repaint();
-    }
 }
 
 void DynamicsDisplay::updateMeters (float dt)
@@ -518,10 +375,9 @@ void DynamicsDisplay::updateMeters (float dt)
     {
         auto& m = processor.meters[(size_t) b];
         auto& s = meterState[(size_t) b];
-        const float in = m.inputDb.load(), out = m.outputDb.load();
-        s.in  += (in  - s.in)  * (in  > s.in  ? rise : fall);
-        s.out += (out - s.out) * (out > s.out ? rise : fall);
-        s.gain += (m.gainDb.load() - s.gain) * gainGlide;
+        const float env = m.envelopeDb.load();
+        s.envelope += (env - s.envelope) * (env > s.envelope ? rise : fall);
+        s.gain   += (m.gainDb.load() - s.gain) * gainGlide;
         s.makeup += (m.makeupDb.load() - s.makeup) * gainGlide;
     }
     repaint();
@@ -531,110 +387,12 @@ void DynamicsDisplay::paint (Graphics& g)
 {
     for (int b = 0; b < 3; ++b)
         paintLane (g, b, lanes[(size_t) b]);
-
-    // optional dB scale: 80 .. 0
-    if (scaleArea.isEmpty())
-        return;
-
-    g.setFont (CustomLookAndFeel::uiFont (10.5f, true));
-    const auto& ref = lanes[0];
-    for (int db = -80; db <= 0; db += 10)
-    {
-        const float x = xForDb ((float) db, ref);
-        g.setColour (Theme::labelText.withAlpha (0.5f));
-        g.drawVerticalLine ((int) x, scaleArea.getY(), scaleArea.getY() + 3.0f);
-        g.setColour (Theme::labelText);
-        g.drawText (String (-db), Rectangle<float> (x - 14.0f, scaleArea.getY() + 3.0f, 28.0f, scaleArea.getHeight() - 3.0f),
-                    Justification::centred);
-    }
 }
 
 void DynamicsDisplay::paintLane (Graphics& g, int band, Rectangle<float> lane)
 {
     CustomLookAndFeel::drawInsetBox (g, lane.expanded (3.0f, 3.0f), 3.0f);
 
-    if (compact)
-    {
-        paintCompactLane (g, band, lane);
-        return;
-    }
-
-    if (! bandEnabled (band))
-    {
-        g.setFont (CustomLookAndFeel::uiFont (11.0f, true));
-        g.setColour (Theme::labelText.withAlpha (0.6f));
-        g.drawText ("BAND OFF", lane, Justification::centred);
-        return;
-    }
-
-    const bool above = showAbove(), below = showBelow();
-    const float ax = above ? xForDb (thresholdDb (band, ott::BandIDs::aboveThresh), lane) : lane.getRight();
-    const float bx = below ? xForDb (thresholdDb (band, ott::BandIDs::belowThresh), lane) : lane.getX();
-    const bool hoverBelowEdge = hover.band == band && hover.target == Target::BelowHandle;
-    const bool hoverAboveEdge = hover.band == band && hover.target == Target::AboveHandle;
-
-    // Upward area (left of the below threshold) and downward area (right of the above threshold).
-    const auto belowRect = lane.withRight (bx);
-    const auto aboveRect = lane.withLeft (ax);
-    g.setColour (Theme::upRegion.withAlpha (0.8f));
-    g.fillRect (belowRect);
-    g.setColour (Theme::downRegion.withAlpha (0.85f));
-    g.fillRect (aboveRect);
-    if (hover.band == band && hover.target == Target::BelowRegion) { g.setColour (Colours::white.withAlpha (0.06f)); g.fillRect (belowRect); }
-    if (hover.band == band && hover.target == Target::AboveRegion) { g.setColour (Colours::white.withAlpha (0.06f)); g.fillRect (aboveRect); }
-
-    // Threshold edges: a thin line, highlighted while hovered.
-    auto drawEdge = [&] (float x, bool isHover)
-    {
-        if (isHover)
-        {
-            g.setColour (Theme::orange.withAlpha (0.25f));
-            g.fillRect (x - 3.0f, lane.getY(), 6.0f, lane.getHeight());
-        }
-        g.setColour (Theme::orange.withAlpha (isHover ? 1.0f : 0.55f));
-        g.fillRect (x - (isHover ? 1.0f : 0.5f), lane.getY(), isHover ? 2.0f : 1.0f, lane.getHeight());
-    };
-    if (below) drawEdge (bx, hoverBelowEdge);
-    if (above) drawEdge (ax, hoverAboveEdge);
-
-    // One meter strip through the middle: input level (grey), what the compressor does
-    // (orange = pushed down, light blue = lifted up) and a tick where the level ends up.
-    const auto& m = meterState[(size_t) band];
-    const auto strip = lane.withSizeKeepingCentre (lane.getWidth(), 8.0f);
-    g.setColour (Colours::black.withAlpha (0.35f));
-    g.fillRect (strip);
-
-    if (m.in > ott::kMinDb + 0.5f)
-    {
-        const float inX = xForDb (m.in, lane);
-        const float endX = xForDb (m.in + m.gain, lane);
-
-        g.setColour (Colours::white.withAlpha (0.28f));
-        g.fillRect (strip.withRight (std::min (inX, endX)));
-
-        if (std::abs (endX - inX) > 0.5f)
-        {
-            const bool pushedDown = endX < inX;
-            g.setColour (pushedDown ? Theme::orange.withAlpha (0.85f) : Colour (0xff8fc7ff).withAlpha (0.85f));
-            g.fillRect (Rectangle<float>::leftTopRightBottom (std::min (inX, endX), strip.getY(),
-                                                             std::max (inX, endX), strip.getBottom()));
-        }
-
-        g.setColour (Colours::white);
-        g.fillRect (endX - 1.0f, strip.getY() - 3.0f, 2.0f, strip.getHeight() + 6.0f);
-    }
-
-    // small, dim gain readout
-    g.setFont (CustomLookAndFeel::uiFont (10.0f, true));
-    g.setColour (Colours::white.withAlpha (0.55f));
-    String text = (m.gain >= 0.05f ? "+" : "") + String (m.gain, 1) + " dB";
-    if (get (band, ott::BandIDs::autoGain) >= 0.5f)
-        text << "   A " << (m.makeup >= 0.0f ? "+" : "") << String (m.makeup, 1);
-    g.drawText (text, lane.reduced (5.0f, 2.0f), Justification::topRight);
-}
-
-void DynamicsDisplay::paintCompactLane (Graphics& g, int band, Rectangle<float> lane)
-{
     if (! bandEnabled (band))
     {
         g.setFont (CustomLookAndFeel::uiFont (10.5f, true));
@@ -656,10 +414,11 @@ void DynamicsDisplay::paintCompactLane (Graphics& g, int band, Rectangle<float> 
     g.setColour (Colours::black.withAlpha (0.35f));
     g.fillRect (strip);
 
-    if (m.in > ott::kMinDb + 0.5f)
+    // the level against the thresholds
+    if (m.envelope > ott::kMinDb + 0.5f)
     {
-        const float inX = xForDb (m.in, meter);
-        const float endX = xForDb (m.in + m.gain, meter);
+        const float inX = xForDb (m.envelope, meter);
+        const float endX = xForDb (m.envelope + m.gain, meter);
         g.setColour (Colours::white.withAlpha (0.28f));
         g.fillRect (strip.withRight (std::min (inX, endX)));
         if (std::abs (endX - inX) > 0.5f)
@@ -671,13 +430,24 @@ void DynamicsDisplay::paintCompactLane (Graphics& g, int band, Rectangle<float> 
         g.fillRect (endX - 1.0f, strip.getY() - 3.0f, 2.0f, strip.getHeight() + 6.0f);
     }
 
+    // threshold ticks: up (blue) and down (orange), above and below the strip
+    auto drawTick = [&] (float db, Colour colour)
+    {
+        const float x = xForDb (db, meter);
+        g.setColour (colour);
+        g.fillRect (x - 0.75f, meter.getY() + 2.0f, 1.5f, strip.getY() - meter.getY() - 3.0f);
+        g.fillRect (x - 0.75f, strip.getBottom() + 1.0f, 1.5f, meter.getBottom() - strip.getBottom() - 3.0f);
+    };
+    if (upwardActive (band))   drawTick (upThresholdDb (band),   Colour (0xff8fc7ff));
+    if (downwardActive (band)) drawTick (downThresholdDb (band), Theme::orange);
+
     // gain change readout
     g.setColour (Colours::white.withAlpha (0.08f));
     g.drawVerticalLine ((int) textArea.getX(), textArea.getY() + 3.0f, textArea.getBottom() - 3.0f);
     g.setFont (CustomLookAndFeel::uiFont (11.0f, true));
     g.setColour (Colours::white.withAlpha (0.8f));
     const String text = (m.gain >= 0.05f ? "+" : "") + String (m.gain, 1) + " dB";
-    if (get (band, ott::BandIDs::autoGain) >= 0.5f)
+    if (get (ott::bandParam (band, ott::BandIDs::autoGain)) >= 0.5f)
     {
         g.drawText (text, textArea.withTrimmedBottom (textArea.getHeight() * 0.45f), Justification::centredBottom);
         g.setFont (CustomLookAndFeel::uiFont (10.0f, true));
@@ -718,15 +488,15 @@ void HelpOverlay::paint (Graphics& g)
 
     const char* lines[] =
     {
-        "Three-band upward + downward compressor (OTT style).",
-        "DEPTH = dry/wet.  TIME scales every attack and release.  IN GAIN drives all bands.",
-        "LINK: turning IN GAIN up turns OUT GAIN down by the same amount (keeps the level matched).",
+        "Three-band upward + downward compressor.",
+        "DEPTH = how much of the effect is used (0 % = untouched).  TIME scales every attack / release.",
+        "IN GAIN drives the bands, OUT GAIN sets the level.  LINK: In up = Out down by the same amount.",
         "AUTO GAIN: keeps the output as loud (K-weighted, like LUFS) as what comes into the plugin.",
-        "BANDS: AMOUNT knob = how much of that band's compression is used (0 = none, 150 % = extra).",
-        "Meter: grey = level in, orange = pushed down, blue = lifted up.  Right knob = band output.",
+        "BANDS: AMOUNT = how much of that band's gain change is used (0 = none, 150 % = extra).",
+        "Meter: grey = level, orange tick = down threshold, blue tick = up threshold, right knob = band gain.",
         "S = solo a band.  A = band auto gain: keeps that band's level when you change its compression.",
-        "UPWARD / DOWNWARD scale each direction.  LINEAR PHASE: on = no phase shift (43 ms latency).",
-        "ADVANCED: split frequencies and slope, and Threshold / Attack / Release for each band.",
+        "UPWARD / DOWNWARD = strength of each direction.  LINEAR PHASE: no phase shift between the bands.",
+        "ADVANCED: split points, slope, Clean XOV, and per band Threshold, Attack / Release, Byp Up / Down.",
         "RANDOM: new random settings (Bypass, Solo, Linear Phase, LINK and Auto Gain stay as they are).",
         "Knobs: drag (shift = fine), wheel = 1.0 steps, shift + wheel = 0.1, double-click = reset,",
         "right-click = type a value.  Drag the corner or use SIZE to resize.",

@@ -9,178 +9,203 @@ namespace ott
 
 //==============================================================================
 /**
-    One band of the OTT: upward + downward compression on a stereo-linked
-    detector, in the style of Ableton's Multiband Dynamics.
+    One band of the compressor, stereo-linked (the same code runs for every band).
 
-      - Above threshold / ratio: downward compression (ratio "inf" = limiting).
-      - Below threshold / ratio: upward compression (quiet signals are raised
-        towards the threshold, capped at +36 dB).
-      - Upward and Downward scale the gain change in dB; the band's Amount scales
-        all of it (0 = no compression on this band, 1 = full, up to 1.5 for extra squash).
-      - Time scales attack and release.
-      - Auto release (program dependent): two gain envelopes, a fast one (60 ms
-        release) and a slow one (250 ms attack, 1.2 s release); the band follows
-        whichever compresses more. Short peaks recover quickly, sustained
-        compression recovers slowly, so there's less pumping on dense material.
-      - Auto gain (make-up): keeps 8 s of the band's incoming level (10 ms steps)
-        and works out the exact loudness change the current gain curve applies to
-        it; the make-up cancels that. Changing a threshold, ratio or Upward /
-        Downward updates it at once (it re-evaluates the history), and it only
-        drifts at the pace of an 8 s loudness window, so it doesn't ride the music.
-        A running comparison of the real compressor output with the static curve
-        corrects for attack / release, so the long-term level matches to ~0.2 dB.
-        The band's output gain still trims on top.
+    Per sample:
+      - the band is multiplied by its input gain (In Gain x (0.52 Depth + 1), given per sample)
+      - detector: p = L^2 + R^2 + 1e-25, one-pole smoothed (RMS window), level = sqrt (p)
+        (with RMS off the smoothing is skipped: a peak-style detector)
+      - envelope (linear): rises towards the level with the attack coefficient, otherwise
+        decays by the release coefficient; values below 1e-10 are flushed to 0
+      - gain from the envelope in dB:
+            above the down threshold:  (downRatio - 1) * (env - downThr), linear gain >= 0.01
+            below the up threshold:    min ((upThr - env) * upAmount, +36 dB)
+            otherwise:                 0 dB
+      - look-ahead: the gain goes on the band sample kLookaheadSamples earlier
+
+    Additions on top of that engine:
+      - Amount scales the gain change (0 = none, 1 = full, up to 1.5)
+      - Soft knee (off by default) rounds both thresholds over kSoftKneeDb
+      - Auto release: a fast and a slow envelope, the band follows the higher one, so short
+        peaks recover quickly and sustained compression slowly
+      - Auto gain (make-up): keeps 8 s of the band's incoming level (10 ms steps) and works
+        out the exact loudness change the current gain curve applies to it; the make-up
+        cancels that. A setting change is compensated at once (the history is re-evaluated),
+        and a comparison with the real output corrects for attack / release.
+      - The band's output gain (spec "Gain L/M/H") and the power button (off = the band,
+        delayed to match, passes untouched).
 */
 class BandCompressor
 {
 public:
     struct Settings
     {
-        float inputDb = 0.0f, outputDb = 0.0f;
-        float attackMs = 10.0f, releaseMs = 100.0f;
-        float aboveThresh = -30.0f, aboveRatio = 4.0f;
-        float belowThresh = -40.0f, belowRatio = 4.0f;
-        float upward = 1.0f, downward = 1.0f, timeScale = 1.0f, amount = 1.0f;
-        bool active = true, softKnee = true, rms = true, autoRelease = false, autoGain = false;
+        float downThresholdDb = -30.0f, upThresholdDb = -40.0f;
+        float downSlope = 0.0f;          // downRatio - 1  (<= 0)
+        float upAmount = 0.0f;           // dB of gain per dB below the up threshold
+        float attackMs = 5.0f, releaseMs = 50.0f, timeScale = 1.0f;
+        float amount = 1.0f;
+        float outputGain = 1.0f;         // band Gain, linear
+        bool active = true, softKnee = false, rms = true, autoRelease = false, autoGain = false;
     };
 
     struct Meter
     {
-        float inputDb = kMinDb;   // detector level (after input gain)
-        float outputDb = kMinDb;  // band output peak
-        float gainDb = 0.0f;      // gain change applied by the compressor
-        float makeupDb = 0.0f;    // auto gain make-up
+        float envelopeDb = kMinDb;  // detector envelope
+        float gainDb = 0.0f;        // gain change applied by the compressor
+        float makeupDb = 0.0f;      // auto gain make-up
     };
 
     void prepare (double fs)
     {
         sampleRate = fs;
-        inGain.reset (fs, 0.02);
         outGain.reset (fs, 0.02);
         activeMix.reset (fs, 0.03);
-        rmsAlpha = 1.0f - coefFor (10.0f);
+        rmsAlpha = 1.0f - coefFor (Engine::kRmsWindowMs);
         makeupAlpha = 1.0f - coefFor (100.0f);
         blockLength = std::max (1, juce::roundToInt (0.01 * fs));
+        setSettings (settings);
         reset();
     }
 
     void reset()
     {
-        envMs = 0.0f;
-        gainDb = fastDb = slowDb = 0.0f;
+        smoothedPower = 0.0f;
+        envelope = fastEnvelope = slowEnvelope = 0.0f;
+        for (auto* ring : { &ringY, &ringX })
+            for (auto& ch : *ring)
+                ch.fill (0.0f);
+        ringPos = 0;
         resetMakeup();
         makeupGain = makeupTarget = 1.0f;
-        inGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (settings.inputDb));
-        outGain.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (settings.outputDb));
+        outGain.setCurrentAndTargetValue (settings.outputGain);
         activeMix.setCurrentAndTargetValue (settings.active ? 1.0f : 0.0f);
+        meter = {};
     }
 
     void setSettings (const Settings& s)
     {
         using juce::exactlyEqual;
-        const bool curveChanged = ! exactlyEqual (s.aboveThresh, settings.aboveThresh) || ! exactlyEqual (s.belowThresh, settings.belowThresh)
-                               || ! exactlyEqual (s.aboveRatio, settings.aboveRatio) || ! exactlyEqual (s.belowRatio, settings.belowRatio)
-                               || ! exactlyEqual (s.upward, settings.upward) || ! exactlyEqual (s.downward, settings.downward)
+        const bool curveChanged = ! exactlyEqual (s.downThresholdDb, settings.downThresholdDb)
+                               || ! exactlyEqual (s.upThresholdDb, settings.upThresholdDb)
+                               || ! exactlyEqual (s.downSlope, settings.downSlope)
+                               || ! exactlyEqual (s.upAmount, settings.upAmount)
                                || ! exactlyEqual (s.amount, settings.amount)
                                || s.softKnee != settings.softKnee || s.rms != settings.rms;
         const bool switchedOn = s.autoGain && ! settings.autoGain;
         settings = s;
+
+        outGain.setTargetValue (s.outputGain);
+        activeMix.setTargetValue (s.active ? 1.0f : 0.0f);
+
+        const float t = std::max (Engine::kMinTime, s.timeScale);
+        attackAlpha  = 1.0f - coefFor (std::max (0.01f, s.attackMs));
+        releaseCoef  = coefFor (std::max (0.1f, s.releaseMs));
+        fastReleaseCoef = coefFor (60.0f * t);
+        slowAttackAlpha = 1.0f - coefFor (std::max (250.0f * t, s.attackMs));
+        slowReleaseCoef = coefFor (1200.0f * t);
+
         if (curveChanged)
             blocksSinceChange = 0;               // the ballistics correction re-learns from new blocks
         if ((curveChanged || switchedOn) && settings.autoGain)
             updateMakeupTarget();                // re-evaluate the history with the new curve
-        inGain.setTargetValue (juce::Decibels::decibelsToGain (s.inputDb));
-        outGain.setTargetValue (juce::Decibels::decibelsToGain (s.outputDb));
-        activeMix.setTargetValue (s.active ? 1.0f : 0.0f);
-
-        const float t = std::max (0.01f, s.timeScale);
-        attackCoef  = coefFor (std::max (0.01f, s.attackMs * t));
-        releaseCoef = coefFor (std::max (0.1f,  s.releaseMs * t));
-        fastReleaseCoef = coefFor (60.0f * t);
-        slowAttackCoef  = coefFor (std::max (250.0f, s.attackMs) * t);
-        slowReleaseCoef = coefFor (1200.0f * t);
-
-        knee = s.softKnee ? 10.0f : 0.0f;
-        downSlope = s.aboveRatio >= kRatioInf ? 1.0f : 1.0f - 1.0f / std::max (1.0f, s.aboveRatio);
-        upSlope   = s.belowRatio >= kRatioInf ? 1.0f : 1.0f - 1.0f / std::max (1.0f, s.belowRatio);
     }
 
-    /** Static gain curve in dB for a detector level in dB (before attack/release). */
-    float computeGainDb (float levelDb) const noexcept
+    /** Static gain curve in dB for an envelope level in dB (before attack/release). */
+    float computeGainDb (float envDb) const noexcept
     {
-        const float x = juce::jlimit (kMinDb, 24.0f, levelDb);
+        const float knee = settings.softKnee ? Engine::kSoftKneeDb : 0.0f;
+        float gain = 0.0f;
 
-        // downward, above threshold
-        float down = 0.0f;
-        const float over = x - settings.aboveThresh;
+        // downward, above the down threshold
+        const float over = envDb - settings.downThresholdDb;
         if (knee > 0.0f && std::abs (over) * 2.0f <= knee)
-            down = -downSlope * (over + knee * 0.5f) * (over + knee * 0.5f) / (2.0f * knee);
+            gain += settings.downSlope * (over + knee * 0.5f) * (over + knee * 0.5f) / (2.0f * knee);
         else if (over > 0.0f)
-            down = -downSlope * over;
+            gain += settings.downSlope * over;
 
-        // upward, below threshold
-        float up = 0.0f;
-        const float under = settings.belowThresh - x;
-        if (knee > 0.0f && std::abs (under) * 2.0f <= knee)
-            up = upSlope * (under + knee * 0.5f) * (under + knee * 0.5f) / (2.0f * knee);
-        else if (under > 0.0f)
-            up = upSlope * under;
+        // upward, below the up threshold (not for silence)
+        if (envDb > Engine::kUpwardFloorDb)
+        {
+            const float under = settings.upThresholdDb - envDb;
+            float up = 0.0f;
+            if (knee > 0.0f && std::abs (under) * 2.0f <= knee)
+                up = settings.upAmount * (under + knee * 0.5f) * (under + knee * 0.5f) / (2.0f * knee);
+            else if (under > 0.0f)
+                up = settings.upAmount * under;
+            gain += std::min (up, Engine::kMaxBoostDb);
+        }
 
-        up = std::min (up, kMaxBoostDb);
-        return settings.amount * (settings.downward * down + settings.upward * up);
+        gain *= settings.amount;
+        return juce::jlimit (-40.0f, Engine::kMaxBoostDb, gain);   // floor: linear 0.01
     }
 
-    /** Processes one band in place. `numChannels` is 1 or 2. */
-    void process (float* const* data, int numChannels, int numSamples)
+    /** Processes one band in place. `inputGain` holds the per-sample input gain. Mono
+        (numChannels == 1) is treated as L = R. */
+    void process (float* const* data, int numChannels, int numSamples, const float* inputGain)
     {
         float* l = data[0];
         float* r = numChannels > 1 ? data[1] : data[0];
-        const float chanNorm = numChannels > 1 ? 0.5f : 1.0f;
+        const bool stereo = numChannels > 1;
 
-        float maxLevelDb = kMinDb, maxOut = 0.0f;
+        float lastGainDb = 0.0f;
 
         for (int i = 0; i < numSamples; ++i)
         {
-            const float xl = l[i], xr = r[i];
+            const float xl = l[i], xr = stereo ? r[i] : l[i];
+            const float yl = xl * inputGain[i], yr = xr * inputGain[i];
 
-            const float gIn = inGain.getNextValue();
-            const float yl = xl * gIn, yr = xr * gIn;
-
-            // stereo-linked detector
-            float levelDb;
+            // detector
+            const float p = yl * yl + yr * yr + Engine::kDetectorOffset;
+            float level;
             if (settings.rms)
             {
-                envMs += rmsAlpha * ((yl * yl + yr * yr) * chanNorm - envMs);
-                levelDb = 10.0f * std::log10 (envMs + 1.0e-12f);
+                smoothedPower += rmsAlpha * (p - smoothedPower);
+                level = std::sqrt (smoothedPower);
             }
             else
             {
-                levelDb = 20.0f * std::log10 (std::max (std::abs (yl), std::abs (yr)) + 1.0e-9f);
+                level = std::sqrt (p);
             }
-            maxLevelDb = std::max (maxLevelDb, levelDb);
 
-            // ballistics on the gain: falling gain = attack, rising gain = release
-            const float target = computeGainDb (levelDb);
+            // envelope
             if (settings.autoRelease)
             {
-                fastDb = target + (target < fastDb ? attackCoef : fastReleaseCoef) * (fastDb - target);
-                slowDb = target + (target < slowDb ? slowAttackCoef : slowReleaseCoef) * (slowDb - target);
-                gainDb = std::min (fastDb, slowDb);
+                fastEnvelope = level > fastEnvelope ? fastEnvelope + (level - fastEnvelope) * attackAlpha
+                                                    : fastEnvelope * fastReleaseCoef;
+                slowEnvelope = level > slowEnvelope ? slowEnvelope + (level - slowEnvelope) * slowAttackAlpha
+                                                    : slowEnvelope * slowReleaseCoef;
+                if (fastEnvelope < Engine::kEnvelopeFloor) fastEnvelope = 0.0f;
+                if (slowEnvelope < Engine::kEnvelopeFloor) slowEnvelope = 0.0f;
+                envelope = std::max (fastEnvelope, slowEnvelope);
             }
             else
             {
-                const float coef = target < gainDb ? attackCoef : releaseCoef;
-                gainDb = target + coef * (gainDb - target);
-                fastDb = slowDb = gainDb;   // ready for a seamless switch to auto
+                envelope = level > envelope ? envelope + (level - envelope) * attackAlpha
+                                            : envelope * releaseCoef;
+                if (envelope < Engine::kEnvelopeFloor) envelope = 0.0f;
+                fastEnvelope = slowEnvelope = envelope;   // ready for a seamless switch to auto
             }
 
-            const float g = juce::Decibels::decibelsToGain (gainDb, -200.0f);
-            float zl = yl * g, zr = yr * g;
+            const float envDb = envelope > 0.0f ? 20.0f * std::log10 (envelope) : -1000.0f;
+            const float gainDb = computeGainDb (envDb);
+            lastGainDb = gainDb;
+            const float g = std::pow (10.0f, gainDb * 0.05f);
+
+            // look-ahead: write the current samples, read the ones kLookaheadSamples earlier
+            ringY[0][(size_t) ringPos] = yl;  ringY[1][(size_t) ringPos] = yr;
+            ringX[0][(size_t) ringPos] = xl;  ringX[1][(size_t) ringPos] = xr;
+            const int readPos = (ringPos - Engine::kLookaheadSamples + kRingSize) % kRingSize;
+            ringPos = (ringPos + 1) % kRingSize;
+            const float dyl = ringY[0][(size_t) readPos], dyr = ringY[1][(size_t) readPos];
+            const float dxl = ringX[0][(size_t) readPos], dxr = ringX[1][(size_t) readPos];
+
+            float zl = dyl * g, zr = dyr * g;
 
             // auto gain: collect the incoming level, then apply the make-up
-            blockIn += (double) (yl * yl + yr * yr) * chanNorm;
-            blockLevel += (double) std::max (kMinDb, levelDb);
-            blockOut += (double) (zl * zl + zr * zr) * chanNorm;
+            blockIn += (double) (yl * yl + yr * yr) * 0.5;
+            blockLevel += (double) std::max (kMinDb, envDb);
+            blockOut += (double) (zl * zl + zr * zr) * 0.5;
             if (++blockCount >= blockLength)
                 pushMakeupBlock();
             makeupGain += makeupAlpha * ((settings.autoGain ? makeupTarget : 1.0f) - makeupGain);
@@ -189,21 +214,17 @@ public:
             zl *= post;
             zr *= post;
 
-            // band power button: crossfade to the untouched band
+            // band power button: crossfade to the untouched (delayed) band
             const float a = activeMix.getNextValue();
-            l[i] = xl + a * (zl - xl);
-            if (numChannels > 1)
-                r[i] = xr + a * (zr - xr);
-
-            maxOut = std::max (maxOut, std::max (std::abs (l[i]), std::abs (numChannels > 1 ? r[i] : 0.0f)));
+            l[i] = dxl + a * (zl - dxl);
+            if (stereo)
+                r[i] = dxr + a * (zr - dxr);
         }
 
-        // denormal guard
-        if (envMs < 1.0e-20f) envMs = 0.0f;
+        if (smoothedPower < 1.0e-30f) smoothedPower = 0.0f;   // denormal guard
 
-        meter.inputDb = std::max (kMinDb, maxLevelDb);
-        meter.outputDb = std::max (kMinDb, juce::Decibels::gainToDecibels (maxOut, -100.0f));
-        meter.gainDb = settings.active ? gainDb : 0.0f;
+        meter.envelopeDb = envelope > 0.0f ? std::max (kMinDb, juce::Decibels::gainToDecibels (envelope)) : kMinDb;
+        meter.gainDb = settings.active ? lastGainDb : 0.0f;
         meter.makeupDb = juce::Decibels::gainToDecibels (makeupGain);
     }
 
@@ -241,7 +262,7 @@ private:
     }
 
     // Make-up = loudness of the history / loudness of the history after the current gain curve
-    // (each 10 ms step weighted by its power, its gain taken at the detector's level).
+    // (each 10 ms step weighted by its power, its gain taken at the envelope's level).
     void updateMakeupTarget()
     {
         double in = 0.0, out = 0.0;
@@ -285,13 +306,17 @@ private:
     Meter meter;
     double sampleRate = 48000.0;
 
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> inGain { 1.0f }, outGain { 1.0f };
-    juce::SmoothedValue<float> activeMix { 1.0f };
+    juce::SmoothedValue<float> outGain { 1.0f }, activeMix { 1.0f };
 
-    float envMs = 0.0f, gainDb = 0.0f, fastDb = 0.0f, slowDb = 0.0f;
-    float attackCoef = 0.0f, releaseCoef = 0.0f, rmsAlpha = 0.0f;
-    float fastReleaseCoef = 0.0f, slowAttackCoef = 0.0f, slowReleaseCoef = 0.0f;
-    float knee = 10.0f, downSlope = 0.0f, upSlope = 0.0f;
+    // detector / envelope
+    float smoothedPower = 0.0f, envelope = 0.0f, fastEnvelope = 0.0f, slowEnvelope = 0.0f;
+    float rmsAlpha = 0.0f, attackAlpha = 0.0f, releaseCoef = 0.0f;
+    float fastReleaseCoef = 0.0f, slowAttackAlpha = 0.0f, slowReleaseCoef = 0.0f;
+
+    // look-ahead
+    static constexpr int kRingSize = 4;
+    std::array<std::array<float, kRingSize>, 2> ringY {}, ringX {};
+    int ringPos = 0;
 
     // auto gain
     static constexpr int kHistory = 800;              // 800 x 10 ms = 8 s

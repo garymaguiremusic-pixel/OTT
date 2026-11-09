@@ -19,9 +19,13 @@ jobs:
         shell: bash
         run: cmake -B build -A x64 2>&1 | tee configure.log; exit ${PIPESTATUS[0]}
 
-      - name: Build VST3
+      - name: Build VST3, Standalone and tests
         shell: bash
-        run: cmake --build build --config Release --target OTT_VST3 --parallel 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
+        run: cmake --build build --config Release --target OTT_VST3 OTT_Standalone OTT_Tests --parallel 2>&1 | tee build.log; exit ${PIPESTATUS[0]}
+
+      - name: Run unit tests
+        shell: bash
+        run: ./build/OTT_Tests_artefacts/Release/OTT_Tests.exe
 
       - name: Upload logs
         if: always()
@@ -45,6 +49,8 @@ jobs:
           mkdir out
           cd build/OTT_artefacts/Release/VST3
           7z a -tzip "$GITHUB_WORKSPACE/out/OTT-Multiband-VST3-Windows-x64.zip" "OTT Multiband.vst3"
+          cd ../Standalone
+          7z a -tzip "$GITHUB_WORKSPACE/out/OTT-Multiband-Standalone-Windows-x64.zip" "OTT Multiband.exe"
 
       - name: Upload zip for publishing
         uses: actions/upload-artifact@v4

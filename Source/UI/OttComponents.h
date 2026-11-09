@@ -112,14 +112,13 @@ public:
 
 //==============================================================================
 /**
-    The centre display, after Ableton's Multiband Dynamics: one lane per band on
-    a -80 .. 0 dB scale with
-      - the input level (thick bar) and the band output level (thin bar)
-      - the below-threshold (upward) and above-threshold (downward) regions,
-        with draggable threshold handles; drag up/down inside a region (or use
-        the wheel) to set its ratio
-      - the gain change in dB
-    The below / above side is hidden while the Upward / Downward knob is at 0.
+    The band meters: one lane per band on a -80 .. 0 dB scale showing
+      - the band's detector envelope (grey) against its up threshold (blue tick)
+        and down threshold (orange tick); a tick is hidden while that direction
+        does nothing (Depth or its strength at 0, or bypassed for the band)
+      - the gain change: orange = pushed down, light blue = lifted up, with a
+        white tick where the level ends up, and the gain in dB (plus the make-up
+        when the band's auto gain is on)
 */
 class DynamicsDisplay : public juce::Component,
                         public juce::TooltipClient
@@ -128,51 +127,34 @@ public:
     explicit DynamicsDisplay (OttAudioProcessor&);
 
     /** Lane rectangles in this component's coordinates (set by the editor). */
-    void setLaneBounds (const std::array<juce::Rectangle<float>, 3>& lanes, juce::Rectangle<float> scaleArea);
+    void setLaneBounds (const std::array<juce::Rectangle<float>, 3>& lanes);
     void updateMeters (float deltaSeconds);
 
     std::function<void (const juce::String&)> onStatus;
-
-    /** Compact: each lane is just a level / gain-change meter (no threshold areas or handles). */
-    bool compact = false;
 
     void paint (juce::Graphics&) override;
     juce::String getTooltip() override;
     void mouseMove (const juce::MouseEvent&) override;
     void mouseExit (const juce::MouseEvent&) override;
-    void mouseDown (const juce::MouseEvent&) override;
-    void mouseDrag (const juce::MouseEvent&) override;
-    void mouseUp (const juce::MouseEvent&) override;
-    void mouseDoubleClick (const juce::MouseEvent&) override;
-    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
 private:
-    enum class Target { None, AboveHandle, BelowHandle, AboveRegion, BelowRegion };
-    struct Hit { int band = -1; Target target = Target::None; };
-
-    Hit findHit (juce::Point<float>) const;
-    juce::RangedAudioParameter* paramFor (const Hit&) const;
-    float xForDb (float db, const juce::Rectangle<float>& lane) const;
-    float dbForX (float x, const juce::Rectangle<float>& lane) const;
-    bool showAbove() const;
-    bool showBelow() const;
+    int bandAt (juce::Point<float>) const;
+    float xForDb (float db, const juce::Rectangle<float>& meter) const;
     bool bandEnabled (int band) const;
-    float get (int band, const char* id) const;
-    float thresholdDb (int band, const char* id) const;   // threshold incl. the band's offset
-    void setParam (juce::RangedAudioParameter&, float value);   // clamps thresholds against each other
-    juce::String describe (const Hit&) const;
+    float get (const juce::String& id) const;
+    float downThresholdDb (int band) const;
+    float upThresholdDb (int band) const;
+    bool downwardActive (int band) const;
+    bool upwardActive (int band) const;
+    juce::String describe (int band) const;
     void paintLane (juce::Graphics&, int band, juce::Rectangle<float> lane);
-    void paintCompactLane (juce::Graphics&, int band, juce::Rectangle<float> lane);
 
     OttAudioProcessor& processor;
     std::array<juce::Rectangle<float>, 3> lanes;
-    juce::Rectangle<float> scaleArea;
 
-    struct MeterState { float in = -80.0f, out = -80.0f, gain = 0.0f, makeup = 0.0f; };
+    struct MeterState { float envelope = -80.0f, gain = 0.0f, makeup = 0.0f; };
     std::array<MeterState, 3> meterState;
-
-    Hit active, hover;
-    float dragStartValue = 0.0f, dragStartProportion = 0.0f, dragStartX = 0.0f, dragStartY = 0.0f, wheelAccumulator = 0.0f;
+    int hoverBand = -1;
 };
 
 //==============================================================================
