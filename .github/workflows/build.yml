@@ -58,15 +58,70 @@ jobs:
           name: publish-windows
           path: out/
 
-  # Publish the zip to a "builds" branch so it can be downloaded straight from GitHub.
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Configure (universal: Apple Silicon + Intel)"
+        run: cmake -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=10.13
+
+      - name: Build VST3 and tests
+        run: cmake --build build --config Release --target OTT_VST3 OTT_Tests
+
+      - name: Run unit tests
+        run: ./build/OTT_Tests_artefacts/Release/OTT_Tests
+
+      # Ad-hoc sign and check the bundle: universal binary, executable bit, valid signature.
+      # (Apple Silicon Macs refuse to load unsigned code.)
+      - name: Sign and verify
+        run: |
+          set -e
+          cd build/OTT_artefacts/Release/VST3
+          codesign --force --deep -s - "OTT Multiband.vst3"
+          codesign --verify --deep --strict "OTT Multiband.vst3"
+          bin="OTT Multiband.vst3/Contents/MacOS/OTT Multiband"
+          test -x "$bin"
+          lipo "$bin" -verify_arch arm64 x86_64
+          echo "OK: $(lipo -archs "$bin")"
+
+      # Installer (VST3 only): installs into /Library/Audio/Plug-Ins/VST3. Files placed by
+      # Installer don't carry the "downloaded" quarantine flag, so Cubase loads the plugin
+      # without the "Apple cannot check it for malicious software" message.
+      - name: Build installer
+        run: |
+          set -e
+          root="$RUNNER_TEMP/pkgroot"
+          mkdir -p "$root/Library/Audio/Plug-Ins/VST3" out
+          ditto "build/OTT_artefacts/Release/VST3/OTT Multiband.vst3" "$root/Library/Audio/Plug-Ins/VST3/OTT Multiband.vst3"
+          # Don't let Installer "relocate" the bundle to wherever an older copy lives.
+          pkgbuild --analyze --root "$root" "$RUNNER_TEMP/components.plist"
+          i=0
+          while /usr/libexec/PlistBuddy -c "Set :$i:BundleIsRelocatable false" "$RUNNER_TEMP/components.plist" 2>/dev/null; do i=$((i+1)); done
+          pkgbuild --root "$root" --component-plist "$RUNNER_TEMP/components.plist" \
+                   --identifier com.garymaguire.ottmultiband.vst3.pkg --version 1.0.0 \
+                   --install-location / "out/OTT-Multiband-VST3-macOS-Installer.pkg"
+          pkgutil --payload-files "out/OTT-Multiband-VST3-macOS-Installer.pkg" | grep "MacOS/OTT Multiband"
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: publish-macos
+          path: out/
+
+  # Publish the Windows zips and the macOS installer to a "builds" branch so they can be fetched with git.
   publish:
-    needs: [windows]
+    needs: [windows, macos]
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: publish-windows
+          path: out
+      - uses: actions/download-artifact@v4
+        with:
+          name: publish-macos
           path: out
       - name: Push builds branch
         run: |

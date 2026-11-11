@@ -140,8 +140,22 @@ Outputs are in `build/OTT_artefacts/Release/` (`VST3/OTT Multiband.vst3`, `Stand
 Options: `-DOTT_BUILD_STANDALONE=OFF`, `-DOTT_BUILD_TESTS=OFF`, `-DOTT_COPY_AFTER_BUILD=ON` (installs
 the plugin after building).
 
-Every push to `main` builds the Windows VST3 and Standalone on GitHub Actions and runs the tests.
-The zips are attached to the run and published to the `builds` branch.
+Every push to `main` builds the Windows VST3 and Standalone and the macOS VST3 installer on GitHub
+Actions and runs the tests on both systems. The files are attached to the run and published to the
+`builds` branch.
+
+### Installing on macOS
+
+Use `OTT-Multiband-VST3-macOS-Installer.pkg` (VST3 only, universal: Apple Silicon and Intel). It installs
+`OTT Multiband.vst3` into `/Library/Audio/Plug-Ins/VST3`. Plugins put there by the installer don't carry
+the "downloaded from the internet" flag, so Cubase opens them without the "Apple cannot check it for
+malicious software" message.
+
+The installer itself isn't signed with an Apple Developer ID, so the first time you open it macOS asks
+about it: right-click (or Control-click) the .pkg and choose **Open**, then **Open** again. On macOS 15
+or later, if there's no Open button, go to **System Settings > Privacy & Security**, scroll down to the
+message about the installer and click **Open Anyway**. You only need to do this once per download.
+Then rescan plugins in Cubase.
 
 ## Tests
 
