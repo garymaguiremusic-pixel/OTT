@@ -8,7 +8,7 @@
 //==============================================================================
 /**
     Main view: global knobs, three band rows (S / A, Amount, meter, band gain) and
-    upward / downward, drawn in the VIRUS DELAY style. The detailed per-band settings
+    upward / downward, in the black / orange theme. The detailed per-band settings
     live on the ADVANCED page, which slides over the main view.
 
     Everything is laid out at a fixed base size inside `Content`, which is then

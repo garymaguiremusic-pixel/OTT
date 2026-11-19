@@ -155,11 +155,11 @@ void ParamControl::showTextEditor()
     editor = std::make_unique<TextEditor>();
     editor->setFont (CustomLookAndFeel::uiFont (12.0f, true));
     editor->setJustification (Justification::centred);
-    editor->setColour (TextEditor::backgroundColourId, Colour (0xff0b0c0e));
+    editor->setColour (TextEditor::backgroundColourId, Theme::lcdBottom);
     editor->setColour (TextEditor::textColourId, Colours::white);
-    editor->setColour (TextEditor::outlineColourId, Theme::blue);
-    editor->setColour (TextEditor::focusedOutlineColourId, Theme::blue);
-    editor->setColour (TextEditor::highlightColourId, Theme::blueGlow.withAlpha (0.6f));
+    editor->setColour (TextEditor::outlineColourId, Theme::accent);
+    editor->setColour (TextEditor::focusedOutlineColourId, Theme::accent);
+    editor->setColour (TextEditor::highlightColourId, Theme::accentGlow.withAlpha (0.6f));
     editor->setBounds (getTextEditorArea());
     editor->setText (getValueText().upToFirstOccurrenceOf (" ", false, false), false);
     addAndMakeVisible (*editor);
@@ -218,7 +218,7 @@ void OttKnob::paint (Graphics& g)
     g.setFont (CustomLookAndFeel::uiFont (11.5f, true));
     g.setColour (Colours::black.withAlpha (0.5f));
     g.drawText (getValueText(), valueArea.translated (0.0f, 1.0f), Justification::centred);
-    g.setColour ((hovering || dragging) ? Theme::blue : Colour (0xffdfe3e6));
+    g.setColour ((hovering || dragging) ? Theme::accent : Theme::lightText);
     g.drawText (getValueText(), valueArea, Justification::centred);
 }
 
@@ -241,18 +241,18 @@ void ValueField::paint (Graphics& g)
         g.setFont (CustomLookAndFeel::uiFont (12.0f, true));
         g.setColour (Colours::black.withAlpha (0.35f));
         g.drawText (getValueText(), b.translated (0.0f, 1.0f), Justification::centred);
-        g.setColour (isEnabled() ? Colours::white : Colour (0xff8a9097));
+        g.setColour (isEnabled() ? Theme::accent : Theme::dimText);   // LCD value: orange
         g.drawText (getValueText(), b, Justification::centred);
     }
     else
     {
         if (hovering || dragging)
         {
-            g.setColour (Theme::blue.withAlpha (0.12f));
+            g.setColour (Theme::accent.withAlpha (0.12f));
             g.fillRoundedRectangle (b, 3.0f);
         }
         g.setFont (CustomLookAndFeel::uiFont (13.0f, true));
-        g.setColour (Theme::blue.withAlpha (isEnabled() ? 1.0f : 0.4f));
+        g.setColour (Theme::accent.withAlpha (isEnabled() ? 1.0f : 0.4f));
         g.drawText (getValueText(), b, Justification::centredRight);
     }
 }
@@ -273,7 +273,7 @@ void PowerButton::paintButton (Graphics& g, bool isHighlighted, bool isDown)
     icon.startNewSubPath (c.x, c.y - r - 1.5f);
     icon.lineTo (c.x, c.y - 0.5f);
 
-    g.setColour ((getToggleState() ? Colours::white : Colour (0xff9aa1a8)).withMultipliedAlpha (isEnabled() ? 1.0f : 0.5f));
+    g.setColour ((getToggleState() ? Colours::white : Theme::labelText).withMultipliedAlpha (isEnabled() ? 1.0f : 0.5f));
     g.strokePath (icon, PathStrokeType (1.6f, PathStrokeType::curved, PathStrokeType::rounded));
 }
 
@@ -351,7 +351,7 @@ String DynamicsDisplay::describe (int band) const
 String DynamicsDisplay::getTooltip()
 {
     return hoverBand < 0 ? String()
-                         : describe (hoverBand) + "\nGrey = level, orange tick = down threshold, blue tick = up threshold.";
+                         : describe (hoverBand) + "\nGrey = level, orange tick = down threshold, pale orange tick = up threshold.";
 }
 
 void DynamicsDisplay::mouseMove (const MouseEvent& e)
@@ -423,14 +423,14 @@ void DynamicsDisplay::paintLane (Graphics& g, int band, Rectangle<float> lane)
         g.fillRect (strip.withRight (std::min (inX, endX)));
         if (std::abs (endX - inX) > 0.5f)
         {
-            g.setColour (endX < inX ? Theme::orange.withAlpha (0.85f) : Colour (0xff8fc7ff).withAlpha (0.85f));
+            g.setColour (endX < inX ? Theme::accent.withAlpha (0.85f) : Theme::accentLight.withAlpha (0.85f));
             g.fillRect (Rectangle<float>::leftTopRightBottom (std::min (inX, endX), strip.getY(), std::max (inX, endX), strip.getBottom()));
         }
         g.setColour (Colours::white);
         g.fillRect (endX - 1.0f, strip.getY() - 3.0f, 2.0f, strip.getHeight() + 6.0f);
     }
 
-    // threshold ticks: up (blue) and down (orange), above and below the strip
+    // threshold ticks: up (pale orange) and down (orange), above and below the strip
     auto drawTick = [&] (float db, Colour colour)
     {
         const float x = xForDb (db, meter);
@@ -438,8 +438,8 @@ void DynamicsDisplay::paintLane (Graphics& g, int band, Rectangle<float> lane)
         g.fillRect (x - 0.75f, meter.getY() + 2.0f, 1.5f, strip.getY() - meter.getY() - 3.0f);
         g.fillRect (x - 0.75f, strip.getBottom() + 1.0f, 1.5f, meter.getBottom() - strip.getBottom() - 3.0f);
     };
-    if (upwardActive (band))   drawTick (upThresholdDb (band),   Colour (0xff8fc7ff));
-    if (downwardActive (band)) drawTick (downThresholdDb (band), Theme::orange);
+    if (upwardActive (band))   drawTick (upThresholdDb (band),   Theme::accentLight);
+    if (downwardActive (band)) drawTick (downThresholdDb (band), Theme::accent);
 
     // gain change readout
     g.setColour (Colours::white.withAlpha (0.08f));
@@ -451,7 +451,7 @@ void DynamicsDisplay::paintLane (Graphics& g, int band, Rectangle<float> lane)
     {
         g.drawText (text, textArea.withTrimmedBottom (textArea.getHeight() * 0.45f), Justification::centredBottom);
         g.setFont (CustomLookAndFeel::uiFont (10.0f, true));
-        g.setColour (Theme::blue);
+        g.setColour (Theme::accent);
         g.drawText ("A " + String (m.makeup >= 0.0f ? "+" : "") + String (m.makeup, 1),
                     textArea.withTrimmedTop (textArea.getHeight() * 0.55f), Justification::centredTop);
     }
@@ -493,7 +493,7 @@ void HelpOverlay::paint (Graphics& g)
         "IN GAIN drives the bands, OUT GAIN sets the level.  LINK: In up = Out down by the same amount.",
         "AUTO GAIN: keeps the output as loud (K-weighted, like LUFS) as what comes into the plugin.",
         "BANDS: AMOUNT = how much of that band's gain change is used (0 = none, 150 % = extra).",
-        "Meter: grey = level, orange tick = down threshold, blue tick = up threshold, right knob = band gain.",
+        "Meter: grey = level, orange tick = down threshold, pale tick = up threshold, right knob = band gain.",
         "S = solo a band.  A = band auto gain: keeps that band's level when you change its compression.",
         "UPWARD / DOWNWARD = strength of each direction.  LINEAR PHASE: no phase shift between the bands.",
         "ADVANCED: split points, slope, Clean XOV, and per band Threshold, Attack / Release, Byp Up / Down.",
@@ -508,7 +508,7 @@ void HelpOverlay::paint (Graphics& g)
     g.setFont (CustomLookAndFeel::uiFont (12.0f));
     for (auto* line : lines)
     {
-        g.setColour (String (line).startsWith ("Click") ? Theme::blue : Colour (0xffdfe3e6));
+        g.setColour (String (line).startsWith ("Click") ? Theme::accent : Theme::lightText);
         g.drawFittedText (line, text.removeFromTop (24.0f).toNearestInt(), Justification::centredLeft, 1, 0.8f);
     }
 }

@@ -471,7 +471,7 @@ void OttAudioProcessorEditor::drawBackground (Graphics& g)
         Graphics bg (background);
         bg.addTransform (AffineTransform::scale (scale));
 
-        bg.setGradientFill (ColourGradient (Colour (0xff3b3e42), 0.0f, 0.0f, Colour (0xff1e2023), 0.0f, (float) kH, false));
+        bg.setGradientFill (ColourGradient (Theme::windowTop, 0.0f, 0.0f, Theme::windowBottom, 0.0f, (float) kH, false));
         bg.fillAll();
 
         Random rng (0x7a11);
@@ -498,7 +498,7 @@ void OttAudioProcessorEditor::drawBackground (Graphics& g)
 
 void OttAudioProcessorEditor::drawWordmark (Graphics& g, Rectangle<float> area)
 {
-    // Chrome "ott", blue "multiband", and a swoosh (as on VIRUS DELAY).
+    // Chrome "ott", orange "multiband", and an orange swoosh.
     const float baseline = area.getBottom() - 7.0f;
 
     GlyphArrangement main;
@@ -521,7 +521,7 @@ void OttAudioProcessorEditor::drawWordmark (Graphics& g, Rectangle<float> area)
     second.createPath (secondPath);
     g.setColour (Colours::black.withAlpha (0.5f));
     g.fillPath (secondPath, AffineTransform::translation (1.0f, 1.0f));
-    g.setColour (Theme::blue);
+    g.setColour (Theme::accent);
     g.fillPath (secondPath);
 
     Path swoosh;
@@ -529,7 +529,7 @@ void OttAudioProcessorEditor::drawWordmark (Graphics& g, Rectangle<float> area)
     const float ex = secondPath.getBounds().getRight();
     swoosh.startNewSubPath (sx, sy);
     swoosh.quadraticTo ((sx + ex) * 0.5f, sy + 3.5f, ex + 6.0f, sy - 2.0f);
-    g.setGradientFill (ColourGradient (Theme::blue.withAlpha (0.0f), sx, sy, Theme::blue, ex, sy, false));
+    g.setGradientFill (ColourGradient (Theme::accent.withAlpha (0.0f), sx, sy, Theme::accent, ex, sy, false));
     g.strokePath (swoosh, PathStrokeType (1.6f, PathStrokeType::curved, PathStrokeType::rounded));
 }
 
@@ -539,7 +539,7 @@ void OttAudioProcessorEditor::paintContent (Graphics& g)
 
     // --- top strip ----------------------------------------------------------------
     auto top = Rectangle<float> (0.0f, 0.0f, (float) kW, (float) kTopStripH);
-    g.setGradientFill (ColourGradient (Colour (0xff4a4e53), 0.0f, 0.0f, Colour (0xff2b2e32), 0.0f, top.getBottom(), false));
+    g.setGradientFill (ColourGradient (Colour (0xff222224), 0.0f, 0.0f, Colour (0xff111112), 0.0f, top.getBottom(), false));
     g.fillRect (top);
     g.setColour (Colours::white.withAlpha (0.18f));
     g.drawHorizontalLine (0, 0.0f, (float) kW);
@@ -564,7 +564,7 @@ void OttAudioProcessorEditor::paintContent (Graphics& g)
         const bool agOn = isOn (ott::ParamIDs::autoGain);
         const float ag = processor.autoGainMeterDb.load();
         g.setFont (CustomLookAndFeel::uiFont (11.5f, true));
-        g.setColour (agOn ? Theme::blue : Theme::labelText.withAlpha (0.6f));
+        g.setColour (agOn ? Theme::accent : Theme::labelText.withAlpha (0.6f));
         g.drawText (agOn ? (ag >= 0.0f ? "+" : "") + String (ag, 1) + " dB" : String ("Off"),
                     Rectangle<float> (420.0f, 152.0f, 82.0f, 16.0f), Justification::centred);
     }
@@ -587,7 +587,7 @@ void OttAudioProcessorEditor::paintContent (Graphics& g)
 
     // --- bottom bar -----------------------------------------------------------------
     auto bar = Rectangle<float> (0.0f, (float) kBottomBarY, (float) kW, (float) (kH - kBottomBarY));
-    g.setGradientFill (ColourGradient (Colour (0xff17191b), 0.0f, bar.getY(), Colour (0xff0c0d0e), 0.0f, bar.getBottom(), false));
+    g.setGradientFill (ColourGradient (Theme::popupBackground, 0.0f, bar.getY(), Theme::insetTop, 0.0f, bar.getBottom(), false));
     g.fillRect (bar);
     g.setColour (Colours::white.withAlpha (0.1f));
     g.drawHorizontalLine (kBottomBarY, 0.0f, (float) kW);
@@ -613,7 +613,10 @@ void OttAudioProcessorEditor::paintContent (Graphics& g)
             const float level = jlimit (0.0f, 1.0f, (db + 60.0f) / 60.0f);
             g.setColour (Colours::black.withAlpha (0.4f));
             g.fillRect (row);
-            g.setColour (db > -0.5f ? Theme::red : Theme::blue);
+            if (db > -0.5f)
+                g.setColour (Theme::red);   // clip
+            else
+                g.setGradientFill (ColourGradient (Theme::orangeTop, 0.0f, row.getY(), Theme::orangeBottom, 0.0f, row.getBottom(), false));
             g.fillRect (row.withWidth (row.getWidth() * level));
         }
     }
@@ -629,14 +632,14 @@ void OttAudioProcessorEditor::paintContent (Graphics& g)
              + String (latency, 1) + " ms LATENCY";
 
     }
-    g.setColour (statusText.isNotEmpty() ? Theme::blue : Colour (0xffc8cdd2));
+    g.setColour (statusText.isNotEmpty() ? Theme::accent : Theme::lightGrey);
     g.drawFittedText (text, inset.reduced (6.0f, 0.0f).toNearestInt(), Justification::centred, 1, 0.8f);
 }
 
 void OttAudioProcessorEditor::paintAdvanced (Graphics& g)
 {
     // page background continues the brushed metal look
-    g.setGradientFill (ColourGradient (Colour (0xff33363a), 0.0f, 0.0f, Colour (0xff1f2124), 0.0f, (float) advanced.getHeight(), false));
+    g.setGradientFill (ColourGradient (Theme::windowTop, 0.0f, 0.0f, Theme::windowBottom, 0.0f, (float) advanced.getHeight(), false));
     g.fillAll();
     CustomLookAndFeel::drawPanel (g, advPanel, "Advanced");
 
@@ -658,7 +661,7 @@ void OttAudioProcessorEditor::paintAdvanced (Graphics& g)
         const float r = (float) kAdvRowY[ott::BandMid];
         CustomLookAndFeel::drawInsetBox (g, { 16.0f, r + 4.0f, 60.0f, 22.0f });
         g.setFont (CustomLookAndFeel::uiFont (11.5f, true));
-        g.setColour (Colour (0xffdfe3e6));
+        g.setColour (Theme::lightText);
         g.drawText ("Mid", Rectangle<float> (16.0f, r + 4.0f, 60.0f, 22.0f), Justification::centred);
 
         auto& apvts = processor.apvts;

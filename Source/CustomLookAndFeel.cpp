@@ -9,17 +9,17 @@ CustomLookAndFeel::CustomLookAndFeel()
     setColour (ComboBox::textColourId,                  Colours::white);
     setColour (ComboBox::backgroundColourId,            Theme::insetBottom);
     setColour (ComboBox::outlineColourId,               Theme::bevelDark);
-    setColour (ComboBox::arrowColourId,                 Colour (0xffd0d4d8));
-    setColour (PopupMenu::backgroundColourId,           Colour (0xff1b1e21));
+    setColour (ComboBox::arrowColourId,                 Theme::accent);
+    setColour (PopupMenu::backgroundColourId,           Theme::popupBackground);
     setColour (PopupMenu::textColourId,                 Colour (0xffe8ebee));
-    setColour (PopupMenu::highlightedBackgroundColourId, Colour (0xff2a6fb8));
+    setColour (PopupMenu::highlightedBackgroundColourId, Theme::orangeBottom);
     setColour (PopupMenu::highlightedTextColourId,      Colours::white);
     setColour (PopupMenu::headerTextColourId,           Theme::labelText);
-    setColour (TextButton::textColourOffId,             Colour (0xffdfe3e6));
+    setColour (TextButton::textColourOffId,             Theme::lightText);
     setColour (TextButton::textColourOnId,              Colours::white);
     setColour (TooltipWindow::textColourId,             Colours::white);
-    setColour (TooltipWindow::backgroundColourId,       Colour (0xf0163f78));
-    setColour (TooltipWindow::outlineColourId,          Theme::blue);
+    setColour (TooltipWindow::backgroundColourId,       Theme::popupBackground.withAlpha ((uint8) 0xf0));
+    setColour (TooltipWindow::outlineColourId,          Theme::accent);
 }
 
 Font CustomLookAndFeel::uiFont (float height, bool bold)
@@ -52,16 +52,16 @@ void CustomLookAndFeel::drawKnob (Graphics& g, Rectangle<float> area, float pos,
     const float angle = start + pos * (end - start);
     const float originAngle = start + origin * (end - start);
 
-    drawTicks (g, c, R - 3.5f, R, start, end, 21, Colour (0xff8d949b).withAlpha (0.8f), 0.8f);
+    drawTicks (g, c, R - 3.5f, R, start, end, 21, Theme::lightGrey.withAlpha (0.6f), 0.8f);
 
-    // Blue arc ring: dark recessed track, glow and bright value arc
+    // Orange arc ring: dark recessed track, glow and bright value arc
     const float ringR = R - 7.0f;
     {
         Path track;
         track.addCentredArc (c.x, c.y, ringR, ringR, 0.0f, start, end, true);
-        g.setColour (Colour (0xff0a0c0e));
+        g.setColour (Theme::bevelDark);
         g.strokePath (track, PathStrokeType (5.5f, PathStrokeType::curved, PathStrokeType::rounded));
-        g.setColour (Colour (0xff1a2633));
+        g.setColour (Colour (0xff2a1a10));   // recessed track, warm black
         g.strokePath (track, PathStrokeType (3.0f, PathStrokeType::curved, PathStrokeType::rounded));
 
         if (std::abs (angle - originAngle) > 0.01f)
@@ -69,13 +69,13 @@ void CustomLookAndFeel::drawKnob (Graphics& g, Rectangle<float> area, float pos,
             Path value;
             value.addCentredArc (c.x, c.y, ringR, ringR, 0.0f, std::min (originAngle, angle), std::max (originAngle, angle), true);
             const float alpha = enabled ? 1.0f : 0.35f;
-            g.setColour (Theme::blueGlow.withAlpha (0.18f * alpha));
+            g.setColour (Theme::accentGlow.withAlpha (0.18f * alpha));
             g.strokePath (value, PathStrokeType (9.0f, PathStrokeType::curved, PathStrokeType::rounded));
-            g.setColour (Theme::blueGlow.withAlpha (0.35f * alpha));
+            g.setColour (Theme::accentGlow.withAlpha (0.35f * alpha));
             g.strokePath (value, PathStrokeType (5.5f, PathStrokeType::curved, PathStrokeType::rounded));
-            g.setColour (Theme::blue.withAlpha (alpha));
+            g.setColour (Theme::accent.withAlpha (alpha));
             g.strokePath (value, PathStrokeType (3.0f, PathStrokeType::curved, PathStrokeType::rounded));
-            g.setColour (Colour (0xffc9e6ff).withAlpha (0.8f * alpha));
+            g.setColour (Theme::accentLight.withAlpha (0.8f * alpha));
             g.strokePath (value, PathStrokeType (1.0f, PathStrokeType::curved, PathStrokeType::rounded));
         }
     }
@@ -88,13 +88,13 @@ void CustomLookAndFeel::drawKnob (Graphics& g, Rectangle<float> area, float pos,
     bodyPath.addEllipse (body);
     DropShadow (Colours::black.withAlpha (0.8f), 6, { 0, 3 }).drawForPath (g, bodyPath);
 
-    g.setGradientFill (ColourGradient (Colour (0xff6a6f75), body.getX(), body.getY(),
-                                       Colour (0xff141618), body.getX(), body.getBottom(), false));
+    g.setGradientFill (ColourGradient (Colour (0xff5a5a5e), body.getX(), body.getY(),
+                                       Colour (0xff0a0a0b), body.getX(), body.getBottom(), false));
     g.fillEllipse (body);
 
     const auto cap = body.reduced (bodyR * 0.14f);
-    g.setGradientFill (ColourGradient (Colour (0xff4a4f55), cap.getCentreX(), cap.getY(),
-                                       Colour (0xff1f2225), cap.getCentreX(), cap.getBottom(), false));
+    g.setGradientFill (ColourGradient (Colour (0xff2c2c2f), cap.getCentreX(), cap.getY(),
+                                       Colour (0xff0d0d0e), cap.getCentreX(), cap.getBottom(), false));
     g.fillEllipse (cap);
 
     g.setGradientFill (ColourGradient (Colours::white.withAlpha (0.12f), cap.getCentreX(), cap.getY(),
@@ -107,7 +107,7 @@ void CustomLookAndFeel::drawKnob (Graphics& g, Rectangle<float> area, float pos,
     // indicator line
     const float s = std::sin (angle), co = -std::cos (angle);
     const float p0 = bodyR * 0.35f, p1 = bodyR * 0.92f;
-    g.setColour (Colour (0xffe6e9ec).withAlpha (enabled ? 1.0f : 0.5f));
+    g.setColour (Colours::white.withAlpha (enabled ? 1.0f : 0.5f));
     g.drawLine (c.x + s * p0, c.y + co * p0, c.x + s * p1, c.y + co * p1, 1.8f);
 }
 
@@ -134,7 +134,7 @@ void CustomLookAndFeel::drawComboBox (Graphics& g, int width, int height, bool,
 
     if (box.hasKeyboardFocus (false) || box.isPopupActive())
     {
-        g.setColour (Theme::blue.withAlpha (0.45f));
+        g.setColour (Theme::accent.withAlpha (0.45f));
         g.drawRoundedRectangle (b.reduced (1.0f), 3.0f, 1.0f);
     }
 
@@ -159,7 +159,7 @@ void CustomLookAndFeel::positionComboBoxText (ComboBox& box, Label& label)
 void CustomLookAndFeel::drawPopupMenuBackground (Graphics& g, int width, int height)
 {
     g.fillAll (findColour (PopupMenu::backgroundColourId));
-    g.setColour (Theme::blue.withAlpha (0.35f));
+    g.setColour (Theme::accent.withAlpha (0.35f));
     g.drawRect (0, 0, width, height, 1);
 }
 
@@ -170,8 +170,8 @@ void CustomLookAndFeel::drawButtonBackground (Graphics& g, Button& button, const
     auto b = button.getLocalBounds().toFloat().reduced (0.5f);
     const bool on = button.getToggleState();
 
-    Colour top = on ? Colour (0xff2f86e0) : Colour (0xff6b7076);
-    Colour bottom = on ? Colour (0xff15508f) : Colour (0xff3c4045);
+    Colour top = on ? Theme::orangeTop : Theme::darkButtonTop;
+    Colour bottom = on ? Theme::orangeBottom : Theme::darkButtonBottom;
     if (isHighlighted) { top = top.brighter (0.12f); bottom = bottom.brighter (0.12f); }
     if (isDown)        std::swap (top, bottom);
 

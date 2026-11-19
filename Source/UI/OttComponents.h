@@ -89,7 +89,7 @@ private:
 };
 
 //==============================================================================
-/** Draggable numeric readout: a blue LCD (split frequencies) or plain blue text (attack / release). */
+/** Draggable numeric readout: an LCD with an orange value, or plain orange text (band gain). */
 class ValueField : public ParamControl
 {
 public:
@@ -113,10 +113,10 @@ public:
 //==============================================================================
 /**
     The band meters: one lane per band on a -80 .. 0 dB scale showing
-      - the band's detector envelope (grey) against its up threshold (blue tick)
+      - the band's detector envelope (grey) against its up threshold (pale orange tick)
         and down threshold (orange tick); a tick is hidden while that direction
         does nothing (Depth or its strength at 0, or bypassed for the band)
-      - the gain change: orange = pushed down, light blue = lifted up, with a
+      - the gain change: orange = pushed down, pale orange = lifted up, with a
         white tick where the level ends up, and the gain in dB (plus the make-up
         when the band's auto gain is on)
 */

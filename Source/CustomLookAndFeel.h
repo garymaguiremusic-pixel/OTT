@@ -5,28 +5,39 @@
 //==============================================================================
 namespace Theme
 {
-    // Same palette as VIRUS DELAY
-    const juce::Colour background   { 0xff2a2d31 };
-    const juce::Colour panelTop     { 0xff34373b };
-    const juce::Colour panelBottom  { 0xff25282b };
-    const juce::Colour headerTop    { 0xff74797f };
-    const juce::Colour headerBottom { 0xff50555a };
-    const juce::Colour headerText   { 0xffe3e6e8 };
-    const juce::Colour labelText    { 0xffb9bec3 };
-    const juce::Colour bevelDark    { 0xff0e0f11 };
-    const juce::Colour bevelLight   { 0x33ffffff };
-    const juce::Colour insetTop     { 0xff0b0c0e };
-    const juce::Colour insetBottom  { 0xff1c1f22 };
-    const juce::Colour lcdTop       { 0xff2a74c9 };
-    const juce::Colour lcdBottom    { 0xff144a92 };
-    const juce::Colour lcdDimTop    { 0xff40464d };
-    const juce::Colour lcdDimBottom { 0xff2b3035 };
-    const juce::Colour blue         { 0xff3fa9ff };
-    const juce::Colour blueGlow     { 0xff1f7fe0 };
-    const juce::Colour red          { 0xffff3b30 };
-    const juce::Colour orange       { 0xffffa53a };   // threshold handles / gain markers
-    const juce::Colour upRegion     { 0xff1d3a57 };   // below threshold (upward)
-    const juce::Colour downRegion   { 0xff4a2b28 };   // above threshold (downward)
+    // Black, with orange as the only accent, light grey for text and labels and white for
+    // highlights (the LeadVerb theme).
+    const juce::Colour background   { 0xff0e0e0f };
+    const juce::Colour panelTop     { 0xff1b1b1d };
+    const juce::Colour panelBottom  { 0xff111112 };
+    const juce::Colour headerTop    { 0xff2e2e31 };
+    const juce::Colour headerBottom { 0xff1e1e20 };
+    const juce::Colour headerText   { 0xffd9d9db };
+    const juce::Colour labelText    { 0xffb4b4b8 };
+    const juce::Colour lightGrey    { 0xffc8c8cc };
+    const juce::Colour bevelDark    { 0xff000000 };
+    const juce::Colour bevelLight   { 0x22ffffff };
+    const juce::Colour insetTop     { 0xff050505 };
+    const juce::Colour insetBottom  { 0xff141415 };
+    const juce::Colour lcdTop       { 0xff1c1714 };
+    const juce::Colour lcdBottom    { 0xff0b0908 };
+    const juce::Colour lcdDimTop    { 0xff171718 };
+    const juce::Colour lcdDimBottom { 0xff0c0c0d };
+    const juce::Colour accent       { 0xffff7a1a };   // orange: the one accent colour
+    const juce::Colour accentGlow   { 0xffe8600c };   // glow around orange elements
+    const juce::Colour accentLight  { 0xffffd2a8 };   // hot core of orange arcs, lit elements
+    const juce::Colour red          { 0xffff3b30 };   // clip / warning only
+
+    // Fixed shades
+    const juce::Colour lightText       { 0xffdfe3e6 };   // button text, help text
+    const juce::Colour dimText         { 0xff6e6e72 };   // text on inactive LCDs
+    const juce::Colour orangeTop       { 0xffff8a2a };   // orange gradient: toggled buttons, meters
+    const juce::Colour orangeBottom    { 0xffc4520a };
+    const juce::Colour darkButtonTop   { 0xff343437 };
+    const juce::Colour darkButtonBottom{ 0xff1a1a1c };
+    const juce::Colour popupBackground { 0xff121213 };
+    const juce::Colour windowTop       { 0xff1a1a1c };   // window background gradient
+    const juce::Colour windowBottom    { 0xff070708 };
 }
 
 //==============================================================================

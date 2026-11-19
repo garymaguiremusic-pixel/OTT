@@ -2,8 +2,8 @@
 
 A three-band upward + downward compressor built with JUCE 8 (C++17, CMake): **VST3** and
 **Standalone** (plus **AU** on macOS). The engine follows a written DSP spec (below), with a
-linear-phase crossover option, and the GUI is drawn in code in the VIRUS DELAY style, with no image
-assets. The window is resizable.
+linear-phase crossover option, and the GUI is drawn in code, with no image assets, in black with
+orange as the only accent (the LeadVerb theme). The window is resizable.
 
 ![screenshot](docs/screenshot.png)
 
@@ -19,9 +19,9 @@ assets. The window is resizable.
 
 ![advanced page](docs/advanced.png)
 
-**Meter** (one per band): grey = the band's detector level, blue tick = up threshold, orange tick =
+**Meter** (one per band): grey = the band's detector level, pale orange tick = up threshold, orange tick =
 down threshold (a tick is hidden while that direction does nothing), orange segment = pushed down,
-light-blue segment = lifted up, white tick = where the level ends up. The number on the right is the
+pale orange segment = lifted up, white tick = where the level ends up. The number on the right is the
 gain change (plus the make-up, "A +x.x", when the band's auto gain is on).
 
 ### Mouse
@@ -182,7 +182,7 @@ Source/
   Presets.h                     factory presets
   PluginProcessor.h/.cpp        parameters, smoothing, split / compress / sum, metering, state
   PluginEditor.h/.cpp           scalable main view + Advanced page
-  CustomLookAndFeel.h/.cpp      knobs, buttons, panels, LCDs (from VIRUS DELAY)
+  CustomLookAndFeel.h/.cpp      palette (Theme), knobs, buttons, panels, LCDs
   UI/OttComponents.h/.cpp       knob / value-field mouse handling, band meters, help
   DSP/BandCompressor.h          per-band upward / downward compressor
   DSP/LinearPhaseCrossover.*    FIR crossover (linear phase)
